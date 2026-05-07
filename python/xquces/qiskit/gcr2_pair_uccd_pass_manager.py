@@ -52,7 +52,11 @@ def _default_alpha_beta_pairs(norb: int, topology: Topology) -> list[tuple[int, 
     return [(p, p) for p in range(norb)]
 
 
-def _validate_pairs(norb: int, name: str, pairs: Sequence[tuple[int, int]]) -> list[tuple[int, int]]:
+def _validate_pairs(
+    norb: int,
+    name: str,
+    pairs: Sequence[tuple[int, int]],
+) -> list[tuple[int, int]]:
     out = [(int(p), int(q)) for p, q in pairs]
     for pair in out:
         if not ((0 <= pair[0] < norb) and (0 <= pair[1] < norb)):
@@ -78,12 +82,20 @@ def _resolve_interaction_pairs(
     elif len(interaction_pairs) == 2:
         raw_aa, raw_ab = interaction_pairs
         pairs_aa = _validate_pairs(norb, "pairs_aa", raw_aa)
-        pairs_ab = _default_alpha_beta_pairs(norb, topology) if raw_ab is None else _validate_pairs(norb, "pairs_ab", raw_ab)
+        pairs_ab = (
+            _default_alpha_beta_pairs(norb, topology)
+            if raw_ab is None
+            else _validate_pairs(norb, "pairs_ab", raw_ab)
+        )
         pairs_bb = list(pairs_aa)
     elif len(interaction_pairs) == 3:
         raw_aa, raw_ab, raw_bb = interaction_pairs
         pairs_aa = _validate_pairs(norb, "pairs_aa", raw_aa)
-        pairs_ab = _default_alpha_beta_pairs(norb, topology) if raw_ab is None else _validate_pairs(norb, "pairs_ab", raw_ab)
+        pairs_ab = (
+            _default_alpha_beta_pairs(norb, topology)
+            if raw_ab is None
+            else _validate_pairs(norb, "pairs_ab", raw_ab)
+        )
         pairs_bb = _validate_pairs(norb, "pairs_bb", raw_bb)
     else:
         raise ValueError("interaction_pairs must be None, length 2, or length 3")
@@ -113,7 +125,9 @@ def _candidate_layout_graph(
 ) -> PyGraph:
     graph = _create_two_chain_layout_graph(norb, pairs_aa, pairs_bb)
     if topology == "heavy-hex":
-        for index, (p, q) in enumerate(sorted(pairs_ab, key=lambda pair: (pair[0], pair[1]))):
+        for index, (p, q) in enumerate(
+            sorted(pairs_ab, key=lambda pair: (pair[0], pair[1]))
+        ):
             bridge = 2 * norb + index
             graph.add_node(bridge)
             graph.add_edge(p, bridge, None)
@@ -126,7 +140,11 @@ def _candidate_layout_graph(
 
 def _two_qubit_gate_names(operations: Sequence[Instruction]) -> list[str]:
     excluded = {"barrier", "reset", "measure", "measurement", "delay"}
-    return [operation.name for operation in operations if operation.num_qubits == 2 and operation.name not in excluded]
+    return [
+        operation.name
+        for operation in operations
+        if operation.num_qubits == 2 and operation.name not in excluded
+    ]
 
 
 def _make_backend_coupling_graph(
@@ -159,16 +177,29 @@ def _make_backend_coupling_graph(
 
     if measure_target is not None:
         for node_id in list(backend_graph.node_indices()):
-            prop = measure_target.get((node_id,), None)
-            if prop is not None and prop.error is not None and prop.error >= readout_error_threshold:
+            prop = measure_target[(node_id,)] if (node_id,) in measure_target else None
+            if (
+                prop is not None
+                and prop.error is not None
+                and prop.error >= readout_error_threshold
+            ):
                 backend_graph.remove_node(node_id)
 
     for gate_name in _two_qubit_gate_names(target.operations):
         gate_target = target[gate_name]
         for edge in list(backend_graph.edge_list()):
-            found_edge = edge if edge in gate_target else edge[::-1]
-            prop = gate_target.get(found_edge, None)
-            if prop is not None and prop.error is not None and prop.error >= two_qubit_error_threshold:
+            if edge in gate_target:
+                found_edge = edge
+            elif edge[::-1] in gate_target:
+                found_edge = edge[::-1]
+            else:
+                continue
+            prop = gate_target[found_edge]
+            if (
+                prop is not None
+                and prop.error is not None
+                and prop.error >= two_qubit_error_threshold
+            ):
                 backend_graph.remove_edge(edge[0], edge[1])
 
     return backend_graph
@@ -194,16 +225,31 @@ def _find_layout_graph(
 ) -> tuple[PyGraph, list[tuple[int, int]]]:
     allowed = list(pairs_ab)
     while True:
-        layout_graph = _candidate_layout_graph(norb, topology, pairs_aa, allowed, pairs_bb)
+        layout_graph = _candidate_layout_graph(
+            norb,
+            topology,
+            pairs_aa,
+            allowed,
+            pairs_bb,
+        )
         if _is_subgraph_embeddable(backend_graph, layout_graph):
             return layout_graph, allowed
         if not allowed:
-            raise RuntimeError("No backend layout satisfies the same-spin chain constraints after error pruning.")
+            raise RuntimeError(
+                "No backend layout satisfies the same-spin chain constraints after error pruning."
+            )
         removed = allowed.pop()
-        warnings.warn(f"Backend cannot accommodate alpha-beta interaction {removed}; dropping it from the layout graph.")
+        warnings.warn(
+            "Backend cannot accommodate alpha-beta interaction "
+            f"{removed}; dropping it from the layout graph."
+        )
 
 
-def _layout_from_graphs(backend_graph: PyGraph, layout_graph: PyGraph, num_logical_qubits: int) -> tuple[int, ...]:
+def _layout_from_graphs(
+    backend_graph: PyGraph,
+    layout_graph: PyGraph,
+    num_logical_qubits: int,
+) -> tuple[int, ...]:
     mappings = rustworkx.vf2_mapping(
         backend_graph,
         layout_graph,
@@ -295,13 +341,21 @@ def generate_gcr2_pair_uccd_pass_manager(
         raise ValueError("nocc must satisfy 0 <= nocc <= norb")
 
     topology = _normalize_topology(topology)
-    pairs_aa, pairs_ab, pairs_bb = _resolve_interaction_pairs(norb, topology, interaction_pairs)
+    pairs_aa, pairs_ab, pairs_bb = _resolve_interaction_pairs(
+        norb,
+        topology,
+        interaction_pairs,
+    )
 
     if "initial_layout" in qiskit_pm_kwargs:
-        warnings.warn("initial_layout is controlled by generate_gcr2_pair_uccd_pass_manager and is ignored.")
+        warnings.warn(
+            "initial_layout is controlled by generate_gcr2_pair_uccd_pass_manager and is ignored."
+        )
         del qiskit_pm_kwargs["initial_layout"]
     if "layout_method" in qiskit_pm_kwargs:
-        warnings.warn("layout_method is controlled by generate_gcr2_pair_uccd_pass_manager and is ignored.")
+        warnings.warn(
+            "layout_method is controlled by generate_gcr2_pair_uccd_pass_manager and is ignored."
+        )
         del qiskit_pm_kwargs["layout_method"]
 
     layout = _placeholder_layout(
