@@ -11,7 +11,7 @@ from qiskit.circuit import (
     QuantumRegister,
     Qubit,
 )
-from qiskit.circuit.library import CXGate, UnitaryGate, XGate, XXPlusYYGate
+from qiskit.circuit.library import CXGate, SwapGate, UnitaryGate, XGate, XXPlusYYGate
 
 from xquces.gcr.igcr import (
     IGCR2Ansatz,
@@ -217,6 +217,15 @@ def product_pair_uccd_stateprep_jw_circuit(
             time=time,
         ):
             circuit.append(instruction)
+    elif strategy == "pair_register_direct":
+        for instruction in _product_pair_uccd_pair_register_direct_stateprep_jw(
+            circuit.qubits,
+            int(norb),
+            nelec,
+            params,
+            time=time,
+        ):
+            circuit.append(instruction)
     elif strategy == "spin_orbital":
         circuit.append(PrepareHartreeFockJW(int(norb), nelec), circuit.qubits)
         circuit.append(
@@ -357,6 +366,40 @@ def _product_pair_uccd_pair_register_stateprep_jw(
     for p in range(nocc):
         yield CircuitInstruction(XGate(), (qubits[p],))
 
+    pair_qubits = qubits[:norb]
+    pair_sites = list(range(norb))
+    for theta, (i, a) in zip(time * params, _pair_uccd_ov_pairs(norb, nocc)):
+        if theta == 0.0:
+            continue
+        yield from _move_pair_site_next_to(pair_qubits, pair_sites, i, a)
+        pos_i = pair_sites.index(i)
+        pos_a = pair_sites.index(a)
+        yield CircuitInstruction(
+            PairRegisterUCCDGivensJW(float(theta)),
+            (pair_qubits[pos_i], pair_qubits[pos_a]),
+        )
+
+    yield from _restore_pair_site_order(pair_qubits, pair_sites)
+
+    for p in range(norb):
+        yield CircuitInstruction(CXGate(), (qubits[p], qubits[norb + p]))
+
+
+def _product_pair_uccd_pair_register_direct_stateprep_jw(
+    qubits: Sequence[Qubit],
+    norb: int,
+    nelec: tuple[int, int],
+    params: np.ndarray,
+    *,
+    time: float,
+) -> Iterator[CircuitInstruction]:
+    if len(qubits) != 2 * norb:
+        raise ValueError("Expected 2 * norb qubits.")
+
+    nocc = nelec[0]
+    for p in range(nocc):
+        yield CircuitInstruction(XGate(), (qubits[p],))
+
     for theta, (i, a) in zip(time * params, _pair_uccd_ov_pairs(norb, nocc)):
         if theta == 0.0:
             continue
@@ -369,13 +412,59 @@ def _product_pair_uccd_pair_register_stateprep_jw(
         yield CircuitInstruction(CXGate(), (qubits[p], qubits[norb + p]))
 
 
+def _move_pair_site_next_to(
+    qubits: Sequence[Qubit],
+    sites: list[int],
+    mover: int,
+    target: int,
+) -> Iterator[CircuitInstruction]:
+    while True:
+        pos_mover = sites.index(mover)
+        pos_target = sites.index(target)
+        if abs(pos_mover - pos_target) <= 1:
+            return
+        step = 1 if pos_mover < pos_target else -1
+        pos_next = pos_mover + step
+        yield _swap_pair_sites(qubits, sites, pos_mover, pos_next)
+
+
+def _restore_pair_site_order(
+    qubits: Sequence[Qubit],
+    sites: list[int],
+) -> Iterator[CircuitInstruction]:
+    target = list(range(len(sites)))
+    while sites != target:
+        for left in range(len(sites) - 1):
+            right = left + 1
+            if sites[left] > sites[right]:
+                yield _swap_pair_sites(qubits, sites, left, right)
+                break
+        else:
+            raise RuntimeError("Could not restore pair-register qubit order.")
+
+
+def _swap_pair_sites(
+    qubits: Sequence[Qubit],
+    sites: list[int],
+    left: int,
+    right: int,
+) -> CircuitInstruction:
+    if abs(left - right) != 1:
+        raise ValueError("Pair-register swaps must be nearest-neighbor.")
+    lo, hi = sorted((left, right))
+    sites[lo], sites[hi] = sites[hi], sites[lo]
+    return CircuitInstruction(SwapGate(), (qubits[lo], qubits[hi]))
+
+
 def _normalize_stateprep_strategy(strategy: str) -> str:
     key = str(strategy).lower().replace("-", "_")
-    if key in {"pair", "pair_register", "logical_pair", "logical_pairs"}:
+    if key in {"pair", "pair_register", "logical_pair", "logical_pairs", "swap_network", "pair_register_swap_network"}:
         return "pair_register"
+    if key in {"pair_register_direct", "logical_pair_direct", "dense_pair_register", "direct_pair_register"}:
+        return "pair_register_direct"
     if key in {"spin_orbital", "full", "unitary", "four_qubit", "naive"}:
         return "spin_orbital"
-    raise ValueError("strategy must be 'pair_register' or 'spin_orbital'")
+    raise ValueError("strategy must be 'pair_register', 'pair_register_direct', or 'spin_orbital'")
 
 
 def _igcr_gate_from_ansatz(
