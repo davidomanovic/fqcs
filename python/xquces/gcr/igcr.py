@@ -65,7 +65,7 @@ from xquces.ucj.init import (
     UCJRestrictedProjectedDFSeed,
     factorize_ccsd_t_amplitudes,
 )
-from xquces.ucj.model import SpinBalancedSpec, SpinRestrictedSpec, UCJAnsatz
+from xquces.ucj.model import SpinBalancedSpec, SpinRestrictedSpec, UCJAnsatz, UCJLayer
 
 
 @dataclass(frozen=True)
@@ -130,6 +130,14 @@ def reduce_spin_balanced(diag: SpinBalancedSpec):
     return IGCR2SpinBalancedSpec(
         same_diag=same_diag, same=same, mixed=mixed, double=double
     )
+
+
+def _left_right_ov_transform_scale_for(right_chart: object, scale: float | None):
+    if scale is None:
+        return None
+    if isinstance(right_chart, IGCR2ReferenceOVUnitaryChart):
+        return scale
+    return None
 
 
 @dataclass(frozen=True)
@@ -453,11 +461,6 @@ def _igcr2_layered_spin_restricted_ansatz_from_ucj(
             "UCJ seed has more layers than the IGCR2 parameterization; "
             "increase layers or use a shallower UCJ seed"
         )
-    if ansatz.n_layers == 1 and layers > 1:
-        return _as_layered_igcr2_spin_restricted_ansatz(
-            IGCR2Ansatz.from_gcr_ansatz(gcr_from_ucj_ansatz(ansatz), nocc),
-            layers,
-        )
     norb = ansatz.norb
     identity = np.eye(norb, dtype=np.complex128)
     final = (
@@ -467,31 +470,24 @@ def _igcr2_layered_spin_restricted_ansatz_from_ucj(
     )
 
     diagonals = []
-    layer_left_factors = []
-    layer_bases = []
-    for idx in range(layers):
-        if idx < ansatz.n_layers:
-            layer = ansatz.layers[idx]
-            if not isinstance(layer.diagonal, SpinRestrictedSpec):
-                raise TypeError("expected a spin-restricted UCJ layer")
-            diagonal = reduce_spin_restricted(layer.diagonal)
-            phase_vec = _restricted_left_phase_vector(
-                layer.diagonal.double_params, nocc
-            )
-            base = np.asarray(layer.orbital_rotation, dtype=np.complex128)
-            layer_left = base @ _diag_unitary(phase_vec)
-        else:
-            diagonal = _zero_igcr2_spin_restricted_spec(norb)
-            base = identity
-            layer_left = identity
+    rotations = []
+    active = list(reversed(ansatz.layers))
+    previous_base = final
+    for layer in active:
+        if not isinstance(layer.diagonal, SpinRestrictedSpec):
+            raise TypeError("expected a spin-restricted UCJ layer")
+        diagonal = reduce_spin_restricted(layer.diagonal)
+        phase_vec = _restricted_left_phase_vector(layer.diagonal.double_params, nocc)
+        base = np.asarray(layer.orbital_rotation, dtype=np.complex128)
         diagonals.append(diagonal)
-        layer_bases.append(base)
-        layer_left_factors.append(layer_left)
+        rotations.append(previous_base @ base @ _diag_unitary(phase_vec))
+        previous_base = base.conj().T
 
-    rotations = [layer_left_factors[0]]
-    for idx in range(1, layers):
-        rotations.append(layer_bases[idx - 1].conj().T @ layer_left_factors[idx])
-    rotations.append(layer_bases[-1].conj().T @ final)
+    rotations.append(exact_reference_ov_unitary(previous_base, nocc))
+    while len(diagonals) < layers:
+        diagonals.append(_zero_igcr2_spin_restricted_spec(norb))
+        rotations.append(identity)
+
     return IGCR2LayeredAnsatz(
         diagonals=tuple(diagonals),
         rotations=tuple(rotations),
@@ -512,11 +508,8 @@ def layered_igcr2_from_ccsd_t_amplitudes(
     Calls ffsim with n_reps=layers to obtain L double-factorization terms
     (U_1, J_1), ..., (U_L, J_L) and the final orbital rotation U_F from t1.
     Each diagonal J_l is reduced independently (iGCR-2 redundancy removal).
-    Orbital rotations are merged as:
-
-        R_0     = U_1 @ phase_1
-        R_k     = U_{k-1}^† @ U_k @ phase_k   (k = 1, ..., L-1)
-        R_L     = U_{L-1}^† @ U_F
+    The resulting layered iGCR-2 seed is ordered so it prepares the same state
+    as the corresponding UCJ seed, up to a global phase on the reference.
 
     Returns IGCR2Ansatz for layers=1, IGCR2LayeredAnsatz for layers>1.
     Extra keyword arguments are forwarded to factorize_ccsd_t_amplitudes.
@@ -529,52 +522,35 @@ def layered_igcr2_from_ccsd_t_amplitudes(
         t2, t1=t1, n_reps=layers, **df_options
     )
 
-    norb = df.orbital_rotations[0].shape[0]
-    identity = np.eye(norb, dtype=np.complex128)
-    n_df = len(df.orbital_rotations)
-    final = (
-        df.final_orbital_rotation if df.final_orbital_rotation is not None else identity
+    ucj_layers = []
+    for J_l, U_l in zip(df.diagonal_coulomb_mats, df.orbital_rotations):
+        pair_l = np.array(J_l, dtype=np.float64, copy=True)
+        np.fill_diagonal(pair_l, 0.0)
+        ucj_layers.append(
+            UCJLayer(
+                diagonal=SpinRestrictedSpec(
+                    double_params=np.diag(J_l).copy(),
+                    pair_params=pair_l,
+                ),
+                orbital_rotation=np.asarray(U_l, dtype=np.complex128),
+            )
+        )
+    ucj = UCJAnsatz(
+        tuple(ucj_layers),
+        final_orbital_rotation=None
+        if df.final_orbital_rotation is None
+        else np.asarray(df.final_orbital_rotation, dtype=np.complex128),
     )
-
-    diagonals: list[IGCR2SpinRestrictedSpec] = []
-    layer_bases: list[np.ndarray] = []
-    layer_left_factors: list[np.ndarray] = []
-    for ell in range(layers):
-        if ell < n_df:
-            J_l = df.diagonal_coulomb_mats[ell]
-            double_l = np.diag(J_l).copy()
-            pair_l = J_l.copy()
-            np.fill_diagonal(pair_l, 0.0)
-            spec_l = SpinRestrictedSpec(double_params=double_l, pair_params=pair_l)
-            diagonal_l = reduce_spin_restricted(spec_l)
-            phase_vec_l = _restricted_left_phase_vector(double_l, nocc)
-            U_l = df.orbital_rotations[ell]
-            layer_left_l = U_l @ _diag_unitary(phase_vec_l)
-        else:
-            diagonal_l = _zero_igcr2_spin_restricted_spec(norb)
-            layer_left_l = identity
-            U_l = identity
-        diagonals.append(diagonal_l)
-        layer_bases.append(U_l)
-        layer_left_factors.append(layer_left_l)
-
-    rotations: list[np.ndarray] = [layer_left_factors[0]]
-    for k in range(1, layers):
-        rotations.append(layer_bases[k - 1].conj().T @ layer_left_factors[k])
-    rotations.append(layer_bases[-1].conj().T @ final)
+    seeded = _igcr2_layered_spin_restricted_ansatz_from_ucj(ucj, nocc, layers)
 
     if layers == 1:
         return IGCR2Ansatz(
-            diagonal=diagonals[0],
-            left=rotations[0],
-            right=rotations[1],
+            diagonal=seeded.diagonals[0],
+            left=seeded.rotations[0],
+            right=seeded.rotations[1],
             nocc=nocc,
         )
-    return IGCR2LayeredAnsatz(
-        diagonals=tuple(diagonals),
-        rotations=tuple(rotations),
-        nocc=nocc,
-    )
+    return seeded
 
 
 @dataclass(frozen=True)
@@ -667,7 +643,10 @@ class IGCR2SpinRestrictedParameterization:
 
     @property
     def _left_right_ov_transform_scale(self):
-        return None
+        return _left_right_ov_transform_scale_for(
+            self.right_orbital_chart,
+            self.left_right_ov_relative_scale,
+        )
 
     def _native_parameters_from_public(self, params: np.ndarray) -> np.ndarray:
         return _left_right_ov_adapted_to_native(
@@ -736,10 +715,7 @@ class IGCR2SpinRestrictedParameterization:
         final = self.right_orbital_chart.unitary_from_parameters(
             params[idx : idx + n], self.norb
         )
-        prefix = np.asarray(left, dtype=np.complex128)
-        for middle in middle_rotations:
-            prefix = prefix @ np.asarray(middle, dtype=np.complex128)
-        right = _right_unitary_from_left_and_final(prefix, final, self.nocc)
+        right = final
         if self.layers == 1:
             return IGCR2Ansatz(
                 diagonal=IGCR2SpinRestrictedSpec(pair=pairs[0]),
@@ -813,24 +789,9 @@ class IGCR2SpinRestrictedParameterization:
             idx += n_middle
 
         n = self.n_right_orbital_rotation_params
-        prefix = self._left_orbital_chart.unitary_from_parameters(
-            rotation_params[0], self.norb
+        out[idx : idx + n] = self.right_orbital_chart.parameters_from_unitary(
+            rotations[-1]
         )
-        for params_i in rotation_params[1:]:
-            prefix = prefix @ self._middle_orbital_chart.unitary_from_parameters(
-                params_i, self.norb
-            )
-        project_reference_ov = isinstance(
-            self.right_orbital_chart,
-            (IGCR2ReferenceOVUnitaryChart, IGCR2RealReferenceOVUnitaryChart),
-        )
-        final_eff = _final_unitary_from_left_and_right(
-            prefix,
-            rotations[-1],
-            self.nocc,
-            project_reference_ov=project_reference_ov,
-        )
-        out[idx : idx + n] = self.right_orbital_chart.parameters_from_unitary(final_eff)
         return self._public_parameters_from_native(out)
 
     def parameters_from_t_amplitudes(
@@ -851,10 +812,12 @@ class IGCR2SpinRestrictedParameterization:
         return self.parameters_from_ansatz(ansatz)
 
     def parameters_from_ucj_ansatz(self, ansatz: UCJAnsatz):
-        raise NotImplementedError(
-            "IGCR2SpinRestrictedParameterization.parameters_from_ucj_ansatz was removed. "
-            "Use parameters_from_t_amplitudes(t2, t1=t1) instead."
+        seeded = _igcr2_layered_spin_restricted_ansatz_from_ucj(
+            ansatz,
+            self.nocc,
+            self.layers,
         )
+        return self.parameters_from_ansatz(seeded)
 
     def transfer_parameters_from(
         self,
@@ -1008,7 +971,10 @@ class IGCR2SpinBalancedParameterization:
 
     @property
     def _left_right_ov_transform_scale(self):
-        return None
+        return _left_right_ov_transform_scale_for(
+            self.right_orbital_chart,
+            self.left_right_ov_relative_scale,
+        )
 
     def _native_parameters_from_public(self, params: np.ndarray) -> np.ndarray:
         return _left_right_ov_adapted_to_native(
@@ -1072,7 +1038,7 @@ class IGCR2SpinBalancedParameterization:
         final = self.right_orbital_chart.unitary_from_parameters(
             params[idx : idx + n], self.norb
         )
-        right = _right_unitary_from_left_and_final(left, final, self.nocc)
+        right = final
         return IGCR2Ansatz(
             diagonal=IGCR2SpinBalancedSpec(
                 same_diag=same_diag, same=same, mixed=mixed, double=double
@@ -1128,13 +1094,7 @@ class IGCR2SpinBalancedParameterization:
         out[idx : idx + self.n_mixed_spin_params] = mixed_full
         idx += self.n_mixed_spin_params
         n = self.n_right_orbital_rotation_params
-        left_param_unitary = self._left_orbital_chart.unitary_from_parameters(
-            left_params, self.norb
-        )
-        final_eff = _final_unitary_from_left_and_right(
-            left_param_unitary, right_eff, self.nocc
-        )
-        out[idx : idx + n] = self.right_orbital_chart.parameters_from_unitary(final_eff)
+        out[idx : idx + n] = self.right_orbital_chart.parameters_from_unitary(right_eff)
         return self._public_parameters_from_native(out)
 
     def parameters_from_ucj_ansatz(self, ansatz: UCJAnsatz):

@@ -548,17 +548,8 @@ def _layered_igcr2_runtime(
             for params in middle_params
         ],
     ]
-    prefix = np.eye(norb, dtype=np.complex128)
-    for rotation in rotations:
-        prefix = prefix @ np.asarray(rotation, dtype=np.complex128)
-    final = right_chart.unitary_from_parameters(right_params, norb)
-    rotations.append(prefix.conj().T @ final)
-
-    suffix_after = [None] * layers
-    suffix = np.eye(norb, dtype=np.complex128)
-    for idx in range(layers - 1, -1, -1):
-        suffix_after[idx] = suffix
-        suffix = np.asarray(rotations[idx], dtype=np.complex128) @ suffix
+    right = right_chart.unitary_from_parameters(right_params, norb)
+    rotations.append(right)
 
     rep_a = [_sector_representation(u, norb, nelec[0]) for u in rotations]
     rep_b = [_sector_representation(u, norb, nelec[1]) for u in rotations]
@@ -588,8 +579,6 @@ def _layered_igcr2_runtime(
         "middle_params": middle_params,
         "right_params": right_params,
         "rotations": rotations,
-        "prefix": prefix,
-        "suffix_after": suffix_after,
         "rep_a": rep_a,
         "rep_b": rep_b,
         "phases": phases,
@@ -630,10 +619,6 @@ def _propagate_layered_after_diagonal(runtime: dict, idx: int, mats: np.ndarray)
     return _propagate_layered_after_rotation(runtime, idx, out)
 
 
-def _conjugate_generator_batch(batch: np.ndarray, u: np.ndarray) -> np.ndarray:
-    return np.matmul(u.conj().T, np.matmul(batch, u))
-
-
 def _layered_prefix_rotation_block(
     runtime: dict,
     rot_idx: int,
@@ -651,24 +636,7 @@ def _layered_prefix_rotation_block(
         tensor_a,
         tensor_b,
     )
-    direct = _propagate_layered_after_rotation(runtime, rot_idx, direct)
-
-    u = runtime["rotations"][rot_idx]
-    suffix = runtime["suffix_after"][rot_idx]
-    right_generator = -_conjugate_generator_batch(
-        _conjugate_generator_batch(generator_batch, u),
-        suffix,
-    )
-    right = _apply_orbital_generator_batch(
-        right_generator,
-        runtime["after_rotation"][-1],
-        tensor_a,
-        tensor_b,
-    )
-    right = _propagate_layered_after_rotation(
-        runtime, len(runtime["after_diag"]), right
-    )
-    return direct + right
+    return _propagate_layered_after_rotation(runtime, rot_idx, direct)
 
 
 def _layered_final_rotation_block(
@@ -680,9 +648,8 @@ def _layered_final_rotation_block(
     if generator_batch.shape[0] == 0:
         dim_a, dim_b = runtime["after_rotation"][0].shape
         return np.zeros((0, dim_a, dim_b), dtype=np.complex128)
-    right_generator = _conjugate_generator_batch(generator_batch, runtime["prefix"])
     out = _apply_orbital_generator_batch(
-        right_generator,
+        generator_batch,
         runtime["after_rotation"][-1],
         tensor_a,
         tensor_b,
@@ -1082,10 +1049,7 @@ def make_restricted_gcr_vjp(
     reference_vec: np.ndarray,
     nelec: tuple[int, int],
 ) -> Callable[[np.ndarray, np.ndarray], np.ndarray]:
-    if (
-        isinstance(parameterization, IGCR2SpinRestrictedParameterization)
-        and parameterization.layers != 1
-    ):
+    if isinstance(parameterization, IGCR2SpinRestrictedParameterization):
         return make_layered_igcr2_vjp(parameterization, reference_vec, nelec)
 
     jac = make_restricted_gcr_jacobian(parameterization, reference_vec, nelec)
@@ -1106,10 +1070,7 @@ def make_restricted_gcr_jacobian(
     reference_vec: np.ndarray,
     nelec: tuple[int, int],
 ) -> Callable[[np.ndarray], np.ndarray]:
-    if (
-        isinstance(parameterization, IGCR2SpinRestrictedParameterization)
-        and parameterization.layers != 1
-    ):
+    if isinstance(parameterization, IGCR2SpinRestrictedParameterization):
         return make_layered_igcr2_jacobian(
             parameterization, reference_vec, nelec
         )
@@ -1235,10 +1196,7 @@ def make_restricted_gcr_subspace_jacobian(
     Unlike :func:`make_restricted_gcr_jacobian`, this does not materialise the
     full tangent matrix. Its cost scales with the number of requested directions.
     """
-    if (
-        isinstance(parameterization, IGCR2SpinRestrictedParameterization)
-        and parameterization.layers != 1
-    ):
+    if isinstance(parameterization, IGCR2SpinRestrictedParameterization):
         return make_layered_igcr2_subspace_jacobian(
             parameterization, reference_vec, nelec
         )
