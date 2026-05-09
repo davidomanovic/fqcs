@@ -291,11 +291,16 @@ def exact_reference_ov_params_from_unitary(u, nocc):
         return np.zeros(0, dtype=np.float64)
     f = u[:, :nocc]
     a = f[:nocc, :]
-    x, _ = scipy.linalg.polar(a, side="right")
-    fp = f @ x.conj().T
-    c = fp[nocc:, :]
-    u_left, s, vh = np.linalg.svd(c, full_matrices=False)
-    angles = np.arcsin(np.clip(s, -1.0, 1.0))
+    c = f[nocc:, :]
+    try:
+        z_thouless = np.linalg.solve(a.T, c.T).T
+        u_left, s, vh = np.linalg.svd(z_thouless, full_matrices=False)
+        angles = np.arctan(s)
+    except np.linalg.LinAlgError:
+        x, _ = scipy.linalg.polar(a, side="right")
+        c = (f @ x.conj().T)[nocc:, :]
+        u_left, s, vh = np.linalg.svd(c, full_matrices=False)
+        angles = np.arcsin(np.clip(s, -1.0, 1.0))
     z = u_left @ np.diag(angles) @ vh
     return np.concatenate([z.real.ravel(), z.imag.ravel()])
 
