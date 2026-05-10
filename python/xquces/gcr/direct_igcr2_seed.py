@@ -3,7 +3,6 @@ from __future__ import annotations
 import numpy as np
 
 from xquces.gcr import igcr as _igcr
-from xquces.ucj.model import SpinRestrictedSpec
 
 
 def layered_igcr2_from_ccsd_t_amplitudes(
@@ -32,34 +31,24 @@ def layered_igcr2_from_ccsd_t_amplitudes(
     if len(df.diagonal_coulomb_mats) != layers:
         raise ValueError("double factorization returned an unexpected number of diagonal blocks")
 
-    norb = df.orbital_rotations[0].shape[0]
-    identity = np.eye(norb, dtype=np.complex128)
-    final = (
-        identity
+    bases = tuple(np.asarray(u, dtype=np.complex128) for u in df.orbital_rotations)
+    norb = bases[0].shape[0]
+    rt1 = (
+        np.eye(norb, dtype=np.complex128)
         if df.final_orbital_rotation is None
         else np.asarray(df.final_orbital_rotation, dtype=np.complex128)
     )
 
-    bases = [np.asarray(u, dtype=np.complex128) for u in df.orbital_rotations]
-    diagonals = []
-    left_factors = []
+    diagonals: list[_igcr.IGCR2SpinRestrictedSpec] = []
+    for j in reversed(df.diagonal_coulomb_mats):
+        pair = np.array(j, dtype=np.float64, copy=True)
+        np.fill_diagonal(pair, 0.0)
+        diagonals.append(_igcr.IGCR2SpinRestrictedSpec(pair=pair))
 
-    for J_l, U_l in zip(df.diagonal_coulomb_mats, bases):
-        double_l = np.diag(J_l).copy()
-        pair_l = np.array(J_l, dtype=np.float64, copy=True)
-        np.fill_diagonal(pair_l, 0.0)
-        spec_l = SpinRestrictedSpec(
-            double_params=double_l,
-            pair_params=pair_l,
-        )
-        diagonals.append(_igcr.reduce_spin_restricted(spec_l))
-        phase_l = _igcr._restricted_left_phase_vector(double_l, nocc)
-        left_factors.append(U_l @ _igcr._diag_unitary(phase_l))
-
-    rotations = [left_factors[0]]
-    for idx in range(1, layers):
-        rotations.append(bases[idx - 1].conj().T @ left_factors[idx])
-    rotations.append(bases[-1].conj().T @ final)
+    rotations: list[np.ndarray] = [bases[-1]]
+    for ell in range(layers - 1, 0, -1):
+        rotations.append(bases[ell].conj().T @ bases[ell - 1])
+    rotations.append(_igcr.exact_reference_ov_unitary(bases[0].conj().T @ rt1, nocc))
 
     if layers == 1:
         return _igcr.IGCR2Ansatz(
