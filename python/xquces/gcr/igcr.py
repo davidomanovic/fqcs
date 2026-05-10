@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from functools import cache
 from typing import Callable
 
+import ffsim
 import numpy as np
 
 from xquces._lib import (
@@ -505,25 +506,30 @@ def layered_igcr2_from_ccsd_t_amplitudes(
 ) -> "IGCR2Ansatz | IGCR2LayeredAnsatz":
     """Build an iGCR-2 ansatz directly from CCSD t-amplitudes.
 
-    Calls ffsim with n_reps=layers to obtain L double-factorization terms
-    (U_1, J_1), ..., (U_L, J_L) and the final orbital rotation U_F from t1.
+    Calls ffsim's spin-restricted UCJ seed with n_reps=layers to obtain L
+    double-factorization terms (U_1, J_1), ..., (U_L, J_L) and the final
+    orbital rotation U_F from t1.
     Each diagonal J_l is reduced independently (iGCR-2 redundancy removal).
     The resulting layered iGCR-2 seed is ordered so it prepares the same state
     as the corresponding UCJ seed, up to a global phase on the reference.
 
     Returns IGCR2Ansatz for layers=1, IGCR2LayeredAnsatz for layers>1.
-    Extra keyword arguments are forwarded to factorize_ccsd_t_amplitudes.
+    Extra keyword arguments are forwarded to
+    UCJOpSpinRestricted.from_t_amplitudes.
     """
     t2 = np.asarray(t2, dtype=np.float64)
     if nocc is None:
         nocc = t2.shape[0]
 
-    df: CCSDDoubleFactorization = factorize_ccsd_t_amplitudes(
-        t2, t1=t1, n_reps=layers, **df_options
+    ucj_op = ffsim.variational.UCJOpSpinRestricted.from_t_amplitudes(
+        t2=t2,
+        t1=t1,
+        n_reps=layers,
+        **df_options,
     )
 
     ucj_layers = []
-    for J_l, U_l in zip(df.diagonal_coulomb_mats, df.orbital_rotations):
+    for J_l, U_l in zip(ucj_op.diag_coulomb_mats, ucj_op.orbital_rotations):
         pair_l = np.array(J_l, dtype=np.float64, copy=True)
         np.fill_diagonal(pair_l, 0.0)
         ucj_layers.append(
@@ -538,8 +544,8 @@ def layered_igcr2_from_ccsd_t_amplitudes(
     ucj = UCJAnsatz(
         tuple(ucj_layers),
         final_orbital_rotation=None
-        if df.final_orbital_rotation is None
-        else np.asarray(df.final_orbital_rotation, dtype=np.complex128),
+        if ucj_op.final_orbital_rotation is None
+        else np.asarray(ucj_op.final_orbital_rotation, dtype=np.complex128),
     )
     seeded = _igcr2_layered_spin_restricted_ansatz_from_ucj(ucj, nocc, layers)
 
