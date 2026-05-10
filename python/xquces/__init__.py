@@ -65,7 +65,6 @@ from xquces.hamiltonians import (
     CanonicalTransformedHamiltonianLinearOperator,
     MolecularHamiltonianLinearOperator,
 )
-from xquces.sqd import run_sqd_from_statevector
 from xquces.gcr import (
     GCR2ProductPairUCCDParameterization,
     GCR3ProductPairUCCDParameterization,
