@@ -118,12 +118,6 @@ SYSTEMS = (
 
 
 def _perturb_higher_order_params(params: np.ndarray, param_obj, scale: float = 1e-3) -> np.ndarray:
-    """Replace zero higher-order (cubic/quartic) params with small random values.
-
-    The flat parameter layout is [left | pair | extra... | right]. Without this,
-    zero-valued cubic/quartic terms get optimized away by the transpiler, making
-    iGCR3/iGCR4 appear identical to iGCR2 in gate count.
-    """
     params = params.copy()
     start = param_obj.n_left_orbital_rotation_params + param_obj.n_pair_params
     end = len(params) - param_obj.n_right_orbital_rotation_params
@@ -193,6 +187,8 @@ def build_system_result(
     optimization_level: int,
     basis_gates: tuple[str, ...],
     seed: int,
+    diagonal_synthesis: str,
+    compare_synthesis: bool,
 ) -> SystemResult:
     mol = build_mol(spec)
     scf = pyscf.scf.RHF(mol)
@@ -269,119 +265,59 @@ def build_system_result(
     igcr3_params = _perturb_higher_order_params(
         igcr3_param.parameters_from_ucj_ansatz(restricted_ucj), igcr3_param
     )
-    igcr3_circuit = igcr3_stateprep_jw_circuit(
-        igcr3_param.ansatz_from_parameters(igcr3_params)
+    igcr3_ansatz = igcr3_param.ansatz_from_parameters(igcr3_params)
+    igcr3_syntheses = (
+        (("iGCR3-naive", "naive"), ("iGCR3-opt", "phase_polynomial"))
+        if compare_synthesis
+        else (("iGCR3", diagonal_synthesis),)
     )
-    results["iGCR3"] = MethodResult(
-        "iGCR3",
-        igcr3_param.n_params,
-        native_stats(
-            igcr3_circuit,
-            "iGCR3",
-            pre_init=XQUCES_PRE_INIT,
-            optimization_level=optimization_level,
-            basis_gates=basis_gates,
-            seed=seed,
-        ),
-    )
+    for label, synthesis in igcr3_syntheses:
+        igcr3_circuit = igcr3_stateprep_jw_circuit(
+            igcr3_ansatz,
+            diagonal_synthesis=synthesis,
+        )
+        results[label] = MethodResult(
+            label,
+            igcr3_param.n_params,
+            native_stats(
+                igcr3_circuit,
+                label,
+                pre_init=XQUCES_PRE_INIT,
+                optimization_level=optimization_level,
+                basis_gates=basis_gates,
+                seed=seed,
+            ),
+        )
 
     igcr4_param = IGCR4SpinRestrictedParameterization(norb=norb, nocc=n_alpha)
     igcr4_params = _perturb_higher_order_params(
         igcr4_param.parameters_from_ucj_ansatz(restricted_ucj), igcr4_param
     )
-    igcr4_circuit = igcr4_stateprep_jw_circuit(
-        igcr4_param.ansatz_from_parameters(igcr4_params)
+    igcr4_ansatz = igcr4_param.ansatz_from_parameters(igcr4_params)
+    igcr4_syntheses = (
+        (("iGCR4-naive", "naive"), ("iGCR4-opt", "phase_polynomial"))
+        if compare_synthesis
+        else (("iGCR4", diagonal_synthesis),)
     )
-    results["iGCR4"] = MethodResult(
-        "iGCR4",
-        igcr4_param.n_params,
-        native_stats(
-            igcr4_circuit,
-            "iGCR4",
-            pre_init=XQUCES_PRE_INIT,
-            optimization_level=optimization_level,
-            basis_gates=basis_gates,
-            seed=seed,
-        ),
-    )
+    for label, synthesis in igcr4_syntheses:
+        igcr4_circuit = igcr4_stateprep_jw_circuit(
+            igcr4_ansatz,
+            diagonal_synthesis=synthesis,
+        )
+        results[label] = MethodResult(
+            label,
+            igcr4_param.n_params,
+            native_stats(
+                igcr4_circuit,
+                label,
+                pre_init=XQUCES_PRE_INIT,
+                optimization_level=optimization_level,
+                basis_gates=basis_gates,
+                seed=seed,
+            ),
+        )
 
     return SystemResult(spec=spec, norb=norb, nelec=nelec, methods=results)
-
-
-def plot_summary(results: list[SystemResult], output: Path) -> None:
-    fig, axes = plt.subplots(
-        2,
-        len(results),
-        figsize=(5.2 * len(results), 8.4),
-        constrained_layout=True,
-    )
-    if len(results) == 1:
-        axes = np.asarray(axes).reshape(2, 1)
-
-    for col, result in enumerate(results):
-        ax = axes[0, col]
-        x = np.arange(len(METRICS))
-        width = 0.18
-        offsets = (np.arange(len(METHODS)) - 0.5 * (len(METHODS) - 1)) * width
-        for method, offset in zip(METHODS, offsets):
-            item = result.methods[method]
-            values = [
-                item.n_params,
-                item.stats.depth,
-                item.stats.gate_count,
-                item.stats.two_qubit_gate_count,
-            ]
-            ax.bar(
-                x + offset,
-                values,
-                width,
-                label=method,
-                color=METHOD_COLORS[method],
-            )
-        ax.set_title(
-            f"{result.spec.label}\n"
-            f"norb={result.norb}, nelec={result.nelec}",
-            fontsize=12,
-        )
-        ax.set_xticks(x)
-        ax.set_xticklabels(METRICS, rotation=20, ha="right")
-        ax.set_yscale("log")
-        ax.grid(axis="y", alpha=0.25)
-        if col == 0:
-            ax.set_ylabel("Count")
-            ax.legend(frameon=False, fontsize=10)
-
-        ax = axes[1, col]
-        method_x = np.arange(len(METHODS))
-        bottom = np.zeros(len(METHODS), dtype=np.float64)
-        for gate in NATIVE_BASIS_GATES:
-            values = np.asarray(
-                [
-                    result.methods[method].stats.count_ops.get(gate, 0)
-                    for method in METHODS
-                ],
-                dtype=np.float64,
-            )
-            ax.bar(
-                method_x,
-                values,
-                bottom=bottom,
-                label=gate.upper(),
-                color=GATE_COLORS.get(gate),
-            )
-            bottom += values
-        ax.set_xticks(method_x)
-        ax.set_xticklabels(METHODS, rotation=20, ha="right")
-        ax.grid(axis="y", alpha=0.25)
-        if col == 0:
-            ax.set_ylabel("Native gate count")
-        if col == len(results) - 1:
-            ax.legend(frameon=False, fontsize=10)
-
-    output.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output, dpi=250)
-    print(f"Wrote figure: {output}")
-
 
 def print_summary(results: list[SystemResult]) -> None:
     columns = [
@@ -397,7 +333,7 @@ def print_summary(results: list[SystemResult]) -> None:
     ]
     print(",".join(columns))
     for result in results:
-        for method in METHODS:
+        for method in result.methods:
             item = result.methods[method]
             ops = ";".join(
                 f"{gate}:{item.stats.count_ops.get(gate, 0)}"
@@ -428,15 +364,20 @@ def parse_args() -> argparse.Namespace:
         default=[spec.key for spec in SYSTEMS],
         help="Subset of systems to run.",
     )
-    parser.add_argument(
-        "--output",
-        type=Path,
-        default=Path("figures/circuit_test.png"),
-        help="Output figure path.",
-    )
     parser.add_argument("--threads", type=int, default=12)
     parser.add_argument("--optimization-level", type=int, default=3)
     parser.add_argument("--seed", type=int, default=DEFAULT_TRANSPILE_SEED)
+    parser.add_argument(
+        "--diagonal-synthesis",
+        choices=("naive", "phase_polynomial"),
+        default="phase_polynomial",
+        help="Synthesis route for iGCR3/iGCR4 diagonal correlators.",
+    )
+    parser.add_argument(
+        "--compare-synthesis",
+        action="store_true",
+        help="Run both naive and phase_polynomial iGCR3/iGCR4 diagonals.",
+    )
     return parser.parse_args()
 
 
@@ -457,11 +398,12 @@ def main() -> None:
                 optimization_level=args.optimization_level,
                 basis_gates=basis_gates,
                 seed=args.seed,
+                diagonal_synthesis=args.diagonal_synthesis,
+                compare_synthesis=args.compare_synthesis,
             )
         )
 
     print_summary(results)
-    plot_summary(results, args.output)
 
 
 if __name__ == "__main__":

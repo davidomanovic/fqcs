@@ -26,9 +26,13 @@ class IGCR4JW(Gate):
         *,
         label: str | None = None,
         validate_orbital_rotations: bool = True,
+        diagonal_synthesis: str = "phase_polynomial",
+        diagonal_threshold: float = 0.0,
     ):
         self.ansatz = ansatz
         self.validate_orbital_rotations = bool(validate_orbital_rotations)
+        self.diagonal_synthesis = diagonal_synthesis
+        self.diagonal_threshold = float(diagonal_threshold)
         super().__init__("igcr4_jw", 2 * ansatz.norb, [], label=label)
 
     def _define(self) -> None:
@@ -38,6 +42,8 @@ class IGCR4JW(Gate):
                 qubits,
                 self.ansatz,
                 validate_orbital_rotations=self.validate_orbital_rotations,
+                diagonal_synthesis=self.diagonal_synthesis,
+                diagonal_threshold=self.diagonal_threshold,
             ),
             qubits=qubits,
             name=self.name,
@@ -48,12 +54,16 @@ def igcr4_jw_circuit(
     ansatz: IGCR4Ansatz,
     *,
     validate_orbital_rotations: bool = True,
+    diagonal_synthesis: str = "phase_polynomial",
+    diagonal_threshold: float = 0.0,
 ) -> QuantumCircuit:
     circuit = QuantumCircuit(2 * ansatz.norb)
     circuit.append(
         IGCR4JW(
             ansatz,
             validate_orbital_rotations=validate_orbital_rotations,
+            diagonal_synthesis=diagonal_synthesis,
+            diagonal_threshold=diagonal_threshold,
         ),
         circuit.qubits,
     )
@@ -64,12 +74,16 @@ def igcr4_stateprep_jw_circuit(
     ansatz: IGCR4Ansatz,
     *,
     validate_orbital_rotations: bool = True,
+    diagonal_synthesis: str = "phase_polynomial",
+    diagonal_threshold: float = 0.0,
 ) -> QuantumCircuit:
     circuit = QuantumCircuit(2 * ansatz.norb)
     for instruction in _igcr4_stateprep_jw(
         circuit.qubits,
         ansatz,
         validate_orbital_rotations=validate_orbital_rotations,
+        diagonal_synthesis=diagonal_synthesis,
+        diagonal_threshold=diagonal_threshold,
     ):
         circuit.append(instruction)
     return circuit
@@ -80,6 +94,8 @@ def _igcr4_jw(
     ansatz: IGCR4Ansatz,
     *,
     validate_orbital_rotations: bool,
+    diagonal_synthesis: str,
+    diagonal_threshold: float,
 ) -> Iterator[CircuitInstruction]:
     if len(qubits) != 2 * ansatz.norb:
         raise ValueError("Expected 2 * ansatz.norb qubits.")
@@ -103,6 +119,8 @@ def _igcr4_jw(
             d.eta_vector(),
             d.rho_vector(),
             d.sigma_vector(),
+            synthesis=diagonal_synthesis,
+            threshold=diagonal_threshold,
         ),
         qubits,
     )
@@ -121,6 +139,8 @@ def _igcr4_stateprep_jw(
     ansatz: IGCR4Ansatz,
     *,
     validate_orbital_rotations: bool,
+    diagonal_synthesis: str,
+    diagonal_threshold: float,
 ) -> Iterator[CircuitInstruction]:
     if len(qubits) != 2 * ansatz.norb:
         raise ValueError("Expected 2 * ansatz.norb qubits.")
@@ -146,6 +166,8 @@ def _igcr4_stateprep_jw(
             d.eta_vector(),
             d.rho_vector(),
             d.sigma_vector(),
+            synthesis=diagonal_synthesis,
+            threshold=diagonal_threshold,
         ),
         qubits,
     )
