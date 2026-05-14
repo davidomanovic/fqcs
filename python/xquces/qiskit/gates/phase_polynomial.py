@@ -22,6 +22,8 @@ from xquces.gcr.utils import (
 
 PauliZCoefficients = dict[tuple[int, ...], float]
 
+_PHASE_POLYNOMIAL_SYNTHESIS_MODES = frozenset({"parity_gadgets", "parity_network"})
+
 
 def _validate_threshold(threshold: float) -> float:
     out = float(threshold)
@@ -30,11 +32,112 @@ def _validate_threshold(threshold: float) -> float:
     return out
 
 
+def _validate_phase_polynomial_synthesis(synthesis: str) -> str:
+    if synthesis not in _PHASE_POLYNOMIAL_SYNTHESIS_MODES:
+        allowed = ", ".join(sorted(_PHASE_POLYNOMIAL_SYNTHESIS_MODES))
+        raise ValueError(f"synthesis must be one of {{{allowed}}}")
+    return synthesis
+
+
 def _sorted_distinct_indices(indices: Sequence[int]) -> tuple[int, ...]:
     out = tuple(sorted(int(i) for i in indices))
     if len(set(out)) != len(out):
         raise ValueError("number-product phase indices must be distinct")
     return out
+
+
+def _support_to_mask(support: Sequence[int]) -> int:
+    mask = 0
+    for index in support:
+        mask |= 1 << int(index)
+    return mask
+
+
+def _iter_set_bits(mask: int) -> Iterator[int]:
+    while mask:
+        bit = mask & -mask
+        yield bit.bit_length() - 1
+        mask ^= bit
+
+
+def _basis_coordinates(rows: Sequence[int], target: int) -> int:
+    basis: dict[int, tuple[int, int]] = {}
+    for index, row0 in enumerate(rows):
+        row = int(row0)
+        coords = 1 << index
+        while row:
+            pivot = row.bit_length() - 1
+            if pivot not in basis:
+                basis[pivot] = (row, coords)
+                break
+            basis_row, basis_coords = basis[pivot]
+            row ^= basis_row
+            coords ^= basis_coords
+
+    row = int(target)
+    coords = 0
+    while row:
+        pivot = row.bit_length() - 1
+        if pivot not in basis:
+            raise ValueError("current parity rows do not span requested support")
+        basis_row, basis_coords = basis[pivot]
+        row ^= basis_row
+        coords ^= basis_coords
+    return coords
+
+
+def _choose_parity_target(coord_mask: int, previous_target: int | None) -> int:
+    if coord_mask == 0:
+        raise ValueError("cannot synthesize empty Pauli-Z support")
+    if previous_target is not None and coord_mask & (1 << previous_target):
+        return previous_target
+    return next(_iter_set_bits(coord_mask))
+
+
+def _active_pauli_z_terms(
+    coeffs: Mapping[tuple[int, ...], float],
+    nqubits: int,
+    threshold: float,
+) -> list[tuple[tuple[int, ...], float]]:
+    out: PauliZCoefficients = {}
+    for support0, coeff0 in coeffs.items():
+        support = tuple(sorted(int(i) for i in support0))
+        if not support:
+            continue
+        if len(set(support)) != len(support):
+            raise ValueError("Pauli-Z supports must contain distinct qubit indices")
+        if support[0] < 0 or support[-1] >= nqubits:
+            raise ValueError("Pauli-Z support index out of range")
+        coeff = float(coeff0)
+        if coeff == 0.0:
+            continue
+        out[support] = out.get(support, 0.0) + coeff
+    return [
+        (support, coeff)
+        for support, coeff in sorted(out.items())
+        if abs(coeff) > threshold
+    ]
+
+
+def _ordered_phase_terms(
+    terms: Sequence[tuple[tuple[int, ...], float]],
+) -> list[tuple[tuple[int, ...], float]]:
+    remaining = [(_support_to_mask(support), support, coeff) for support, coeff in terms]
+    ordered: list[tuple[tuple[int, ...], float]] = []
+    current = 0
+    while remaining:
+        best = min(
+            range(len(remaining)),
+            key=lambda i: (
+                (remaining[i][0] ^ current).bit_count(),
+                len(remaining[i][1]),
+                remaining[i][1],
+            ),
+        )
+        mask, support, coeff = remaining.pop(best)
+        ordered.append((support, coeff))
+        current = mask
+    return ordered
 
 
 def number_product_pauli_z_coefficients(
@@ -76,26 +179,23 @@ def synthesize_pauli_z_phase_polynomial(
     qubits: Sequence[Qubit],
     *,
     threshold: float = 0.0,
+    synthesis: str = "parity_gadgets",
 ) -> Iterator[CircuitInstruction]:
-    """Yield parity-gadget instructions for ``prod_B exp(i c_B Z_B)``."""
+    """Yield instructions for ``prod_B exp(i c_B Z_B)``."""
     threshold = _validate_threshold(threshold)
+    synthesis = _validate_phase_polynomial_synthesis(synthesis)
     nqubits = len(qubits)
+    terms = _active_pauli_z_terms(coeffs, nqubits, threshold)
 
-    for support, coeff0 in sorted(coeffs.items()):
-        support = tuple(int(i) for i in support)
-        if not support:
-            continue
-        if len(set(support)) != len(support):
-            raise ValueError("Pauli-Z supports must contain distinct qubit indices")
-        if support != tuple(sorted(support)):
-            raise ValueError("Pauli-Z supports must be sorted")
-        if support[0] < 0 or support[-1] >= nqubits:
-            raise ValueError("Pauli-Z support index out of range")
+    if synthesis == "parity_network":
+        yield from synthesize_pauli_z_phase_polynomial_parity_network(
+            dict(terms),
+            qubits,
+            threshold=threshold,
+        )
+        return
 
-        coeff = float(coeff0)
-        if abs(coeff) <= threshold:
-            continue
-
+    for support, coeff in terms:
         target = support[-1]
         if len(support) == 1:
             yield CircuitInstruction(RZGate(-2.0 * coeff), (qubits[target],))
@@ -108,8 +208,38 @@ def synthesize_pauli_z_phase_polynomial(
             yield CircuitInstruction(CXGate(), (qubits[control], qubits[target]))
 
 
+def synthesize_pauli_z_phase_polynomial_parity_network(
+    coeffs: Mapping[tuple[int, ...], float],
+    qubits: Sequence[Qubit],
+    *,
+    threshold: float = 0.0,
+) -> Iterator[CircuitInstruction]:
+    """Yield an all-to-all shared parity-network synthesis."""
+    threshold = _validate_threshold(threshold)
+    nqubits = len(qubits)
+    terms = _ordered_phase_terms(_active_pauli_z_terms(coeffs, nqubits, threshold))
+    rows = [1 << i for i in range(nqubits)]
+    cnot_history: list[tuple[int, int]] = []
+    previous_target: int | None = None
+
+    for support, coeff in terms:
+        mask = _support_to_mask(support)
+        coord_mask = _basis_coordinates(rows, mask)
+        target = _choose_parity_target(coord_mask, previous_target)
+        controls = coord_mask & ~(1 << target)
+        for control in _iter_set_bits(controls):
+            yield CircuitInstruction(CXGate(), (qubits[control], qubits[target]))
+            cnot_history.append((control, target))
+            rows[target] ^= rows[control]
+        yield CircuitInstruction(RZGate(-2.0 * coeff), (qubits[target],))
+        previous_target = target
+
+    for control, target in reversed(cnot_history):
+        yield CircuitInstruction(CXGate(), (qubits[control], qubits[target]))
+
+
 class PhasePolynomialJW(Gate):
-    """Collected Pauli-Z phase polynomial synthesized with parity gadgets."""
+    """Collected Pauli-Z phase polynomial."""
 
     def __init__(
         self,
@@ -117,12 +247,14 @@ class PhasePolynomialJW(Gate):
         nqubits: int,
         *,
         threshold: float = 0.0,
+        synthesis: str = "parity_gadgets",
         label: str | None = None,
     ):
         self.nqubits = int(nqubits)
         if self.nqubits < 0:
             raise ValueError("nqubits must be non-negative")
         self.threshold = _validate_threshold(threshold)
+        self.synthesis = _validate_phase_polynomial_synthesis(synthesis)
         self.coeffs = self._normalize_coefficients(coeffs)
         super().__init__("phase_polynomial_jw", self.nqubits, [], label=label)
 
@@ -152,6 +284,7 @@ class PhasePolynomialJW(Gate):
             self.coeffs,
             qubits,
             threshold=self.threshold,
+            synthesis=self.synthesis,
         ):
             circuit.append(instruction)
         self.definition = circuit
@@ -161,6 +294,7 @@ class PhasePolynomialJW(Gate):
             {support: -coeff for support, coeff in self.coeffs.items()},
             self.nqubits,
             threshold=self.threshold,
+            synthesis=self.synthesis,
             label=self.label,
         )
 
