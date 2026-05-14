@@ -14,7 +14,10 @@ from xquces.gcr.igcr import (
     IGCR4Ansatz,
     relabel_igcr2_ansatz_orbitals,
 )
-from xquces.gcr.product_pair_uccd import _pair_uccd_ov_pairs
+from xquces.gcr.product_pair_uccd import (
+    _pair_uccd_ov_pairs,
+    slater_pair_orbital_rotation_from_parameters,
+)
 from xquces.qiskit.gates.igcr2 import IGCR2JW
 from xquces.qiskit.gates.igcr3 import IGCR3JW
 from xquces.qiskit.gates.igcr4 import IGCR4JW
@@ -386,15 +389,12 @@ def _pair_register_orbital_rotation(
     *,
     time: float,
 ) -> np.ndarray:
-    orbital_rotation = np.eye(norb, dtype=np.complex128)
-    for theta, (i, a) in zip(time * params, _pair_uccd_ov_pairs(norb, nocc)):
-        c = float(np.cos(theta))
-        s = float(np.sin(theta))
-        row_i = np.array(orbital_rotation[i], copy=True)
-        row_a = np.array(orbital_rotation[a], copy=True)
-        orbital_rotation[i] = c * row_i - s * row_a
-        orbital_rotation[a] = s * row_i + c * row_a
-    return orbital_rotation
+    return slater_pair_orbital_rotation_from_parameters(
+        norb,
+        (nocc, nocc),
+        params,
+        time=time,
+    )
 
 
 def _product_pair_uccd_pair_register_instructions_jw(

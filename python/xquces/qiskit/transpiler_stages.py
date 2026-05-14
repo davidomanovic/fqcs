@@ -18,5 +18,6 @@ def pre_init_passes() -> Iterator[BasePass]:
             "orbital_rotation_spinless_jw",
             "pair_register_uccd_givens_jw",
             "pair_uccd_rotation_jw",
+            "phase_polynomial_jw",
         ]
     )

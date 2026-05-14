@@ -496,7 +496,7 @@ def _finite_difference_restricted_gcr_subspace_jacobian(
 
 
 def _parse_layered_igcr2_native(
-    parameterization: IGCR2SpinRestrictedParameterization,
+    parameterization: object,
     native: np.ndarray,
 ):
     idx = 0
@@ -504,15 +504,19 @@ def _parse_layered_igcr2_native(
     left_params = native[idx : idx + n_left]
     idx += n_left
 
-    n_pair = parameterization.n_pair_params_per_layer
+    n_diag = getattr(
+        parameterization,
+        "n_diag_params_per_layer",
+        parameterization.n_pair_params_per_layer,
+    )
     if parameterization.shared_diagonal:
-        pair_params = [native[idx : idx + n_pair]] * parameterization.layers
-        idx += n_pair
+        diag_params = [native[idx : idx + n_diag]] * parameterization.layers
+        idx += n_diag
     else:
-        pair_params = []
+        diag_params = []
         for _ in range(parameterization.layers):
-            pair_params.append(native[idx : idx + n_pair])
-            idx += n_pair
+            diag_params.append(native[idx : idx + n_diag])
+            idx += n_diag
 
     n_middle = parameterization.n_middle_orbital_rotation_params_per_layer
     middle_params = []
@@ -522,11 +526,11 @@ def _parse_layered_igcr2_native(
 
     n_right = parameterization.n_right_orbital_rotation_params
     right_params = native[idx : idx + n_right]
-    return left_params, pair_params, middle_params, right_params
+    return left_params, diag_params, middle_params, right_params
 
 
 def _layered_igcr2_runtime(
-    parameterization: IGCR2SpinRestrictedParameterization,
+    parameterization: object,
     native: np.ndarray,
     reference_mat: np.ndarray,
     nelec: tuple[int, int],
@@ -537,19 +541,28 @@ def _layered_igcr2_runtime(
 ):
     norb = parameterization.norb
     layers = parameterization.layers
-    left_params, pair_params, middle_params, right_params = (
+    left_params, diag_params, middle_params, right_params = (
         _parse_layered_igcr2_native(parameterization, native)
     )
 
-    rotations = [
+    prefix_rotations = [
         left_chart.unitary_from_parameters(left_params, norb),
         *[
             middle_chart.unitary_from_parameters(params, norb)
             for params in middle_params
         ],
     ]
-    right = right_chart.unitary_from_parameters(right_params, norb)
-    rotations.append(right)
+    final = right_chart.unitary_from_parameters(right_params, norb)
+    prefix_before = []
+    prefix = np.eye(norb, dtype=np.complex128)
+    for rotation in prefix_rotations:
+        prefix_before.append(prefix)
+        prefix = prefix @ rotation
+    right_depends_on_prefix = bool(
+        getattr(parameterization, "_right_depends_on_prefix", False)
+    )
+    right = prefix.conj().T @ final if right_depends_on_prefix else final
+    rotations = [*prefix_rotations, right]
 
     rep_a = [_sector_representation(u, norb, nelec[0]) for u in rotations]
     rep_b = [_sector_representation(u, norb, nelec[1]) for u in rotations]
@@ -563,7 +576,7 @@ def _layered_igcr2_runtime(
     after_rotation[layers] = current
     for idx in range(layers - 1, -1, -1):
         if diag_features.shape[1]:
-            phase = np.exp(1j * (diag_features @ pair_params[idx])).reshape(
+            phase = np.exp(1j * (diag_features @ diag_params[idx])).reshape(
                 dim_a, dim_b
             )
         else:
@@ -579,6 +592,9 @@ def _layered_igcr2_runtime(
         "middle_params": middle_params,
         "right_params": right_params,
         "rotations": rotations,
+        "prefix_before": prefix_before,
+        "prefix_total": prefix,
+        "right_depends_on_prefix": right_depends_on_prefix,
         "rep_a": rep_a,
         "rep_b": rep_b,
         "phases": phases,
@@ -636,7 +652,36 @@ def _layered_prefix_rotation_block(
         tensor_a,
         tensor_b,
     )
-    return _propagate_layered_after_rotation(runtime, rot_idx, direct)
+    out = _propagate_layered_after_rotation(runtime, rot_idx, direct)
+    if runtime.get("right_depends_on_prefix", False):
+        before = runtime["prefix_before"][rot_idx]
+        prefix = runtime["prefix_total"]
+        transported = np.einsum(
+            "ab,jbc,dc->jad",
+            before,
+            generator_batch,
+            before.conj(),
+            optimize=True,
+        )
+        right_gen = -np.einsum(
+            "ab,jbc,cd->jad",
+            prefix.conj().T,
+            transported,
+            prefix,
+            optimize=True,
+        )
+        right_direct = _apply_orbital_generator_batch(
+            right_gen,
+            runtime["after_rotation"][-1],
+            tensor_a,
+            tensor_b,
+        )
+        out += _propagate_layered_after_rotation(
+            runtime,
+            len(runtime["after_diag"]),
+            right_direct,
+        )
+    return out
 
 
 def _layered_final_rotation_block(
@@ -648,6 +693,15 @@ def _layered_final_rotation_block(
     if generator_batch.shape[0] == 0:
         dim_a, dim_b = runtime["after_rotation"][0].shape
         return np.zeros((0, dim_a, dim_b), dtype=np.complex128)
+    if runtime.get("right_depends_on_prefix", False):
+        prefix = runtime["prefix_total"]
+        generator_batch = np.einsum(
+            "ab,jbc,cd->jad",
+            prefix.conj().T,
+            generator_batch,
+            prefix,
+            optimize=True,
+        )
     out = _apply_orbital_generator_batch(
         generator_batch,
         runtime["after_rotation"][-1],
@@ -660,7 +714,7 @@ def _layered_final_rotation_block(
 
 
 def make_layered_igcr2_jacobian(
-    parameterization: IGCR2SpinRestrictedParameterization,
+    parameterization: object,
     reference_vec: np.ndarray,
     nelec: tuple[int, int],
 ) -> Callable[[np.ndarray], np.ndarray]:
@@ -678,7 +732,7 @@ def make_layered_igcr2_jacobian(
         np.asarray(reference_vec, dtype=np.complex128), norb, nelec
     )
     dim_a, dim_b = reference_mat.shape
-    diag_features = _igcr2_feature_matrix(parameterization, nelec)
+    diag_features = _diag_feature_matrix(parameterization, nelec)
     diag_feature_tensor = diag_features.T.reshape(
         diag_features.shape[1], dim_a, dim_b
     )
@@ -716,28 +770,32 @@ def make_layered_igcr2_jacobian(
                 ).reshape(n_left, dim_a * dim_b).T
             )
 
-        n_pair = parameterization.n_pair_params_per_layer
-        if n_pair:
-            pair_blocks = []
+        n_diag = getattr(
+            parameterization,
+            "n_diag_params_per_layer",
+            parameterization.n_pair_params_per_layer,
+        )
+        if n_diag:
+            diag_blocks = []
             for idx in range(layers):
                 d_after_diag = (
                     1j
                     * diag_feature_tensor
                     * runtime["after_diag"][idx][None, :, :]
                 )
-                pair_blocks.append(
+                diag_blocks.append(
                     _propagate_layered_after_diagonal(
                         runtime, idx, d_after_diag
                     )
                 )
             if parameterization.shared_diagonal:
                 blocks.append(
-                    np.sum(pair_blocks, axis=0).reshape(n_pair, dim_a * dim_b).T
+                    np.sum(diag_blocks, axis=0).reshape(n_diag, dim_a * dim_b).T
                 )
             else:
                 blocks.extend(
-                    block.reshape(n_pair, dim_a * dim_b).T
-                    for block in pair_blocks
+                    block.reshape(n_diag, dim_a * dim_b).T
+                    for block in diag_blocks
                 )
 
         n_middle = parameterization.n_middle_orbital_rotation_params_per_layer
@@ -779,7 +837,7 @@ def make_layered_igcr2_jacobian(
 
 
 def make_layered_igcr2_subspace_jacobian(
-    parameterization: IGCR2SpinRestrictedParameterization,
+    parameterization: object,
     reference_vec: np.ndarray,
     nelec: tuple[int, int],
 ) -> Callable[[np.ndarray, np.ndarray], np.ndarray]:
@@ -798,7 +856,7 @@ def make_layered_igcr2_subspace_jacobian(
     )
     dim_a, dim_b = reference_mat.shape
     dim = dim_a * dim_b
-    diag_features = _igcr2_feature_matrix(parameterization, nelec)
+    diag_features = _diag_feature_matrix(parameterization, nelec)
     transform = _public_to_native_matrix(parameterization)
 
     def subspace_jac(params: np.ndarray, directions: np.ndarray) -> np.ndarray:
@@ -848,12 +906,16 @@ def make_layered_igcr2_subspace_jacobian(
                 runtime, 0, gen_left, tensor_a, tensor_b
             )
 
-        n_pair = parameterization.n_pair_params_per_layer
+        n_diag = getattr(
+            parameterization,
+            "n_diag_params_per_layer",
+            parameterization.n_pair_params_per_layer,
+        )
         if parameterization.shared_diagonal:
-            pair_dirs = native_dirs[idx : idx + n_pair]
-            idx += n_pair
-            if n_pair:
-                feature_dirs = diag_features @ pair_dirs
+            diag_dirs = native_dirs[idx : idx + n_diag]
+            idx += n_diag
+            if n_diag:
+                feature_dirs = diag_features @ diag_dirs
                 d_after_diag = [
                     1j
                     * feature_dirs.T.reshape(n_dir, dim_a, dim_b)
@@ -866,10 +928,10 @@ def make_layered_igcr2_subspace_jacobian(
                     )
         else:
             for layer in range(layers):
-                pair_dirs = native_dirs[idx : idx + n_pair]
-                idx += n_pair
-                if n_pair:
-                    feature_dirs = diag_features @ pair_dirs
+                diag_dirs = native_dirs[idx : idx + n_diag]
+                idx += n_diag
+                if n_diag:
+                    feature_dirs = diag_features @ diag_dirs
                     block = (
                         1j
                         * feature_dirs.T.reshape(n_dir, dim_a, dim_b)
@@ -926,7 +988,7 @@ def _batch_vjp(batch: np.ndarray, v_mat: np.ndarray) -> np.ndarray:
 
 
 def make_layered_igcr2_vjp(
-    parameterization: IGCR2SpinRestrictedParameterization,
+    parameterization: object,
     reference_vec: np.ndarray,
     nelec: tuple[int, int],
 ) -> Callable[[np.ndarray, np.ndarray], np.ndarray]:
@@ -944,7 +1006,7 @@ def make_layered_igcr2_vjp(
         np.asarray(reference_vec, dtype=np.complex128), norb, nelec
     )
     dim_a, dim_b = reference_mat.shape
-    diag_features = _igcr2_feature_matrix(parameterization, nelec)
+    diag_features = _diag_feature_matrix(parameterization, nelec)
     diag_feature_tensor = diag_features.T.reshape(
         diag_features.shape[1], dim_a, dim_b
     )
@@ -985,24 +1047,28 @@ def make_layered_igcr2_vjp(
             )
             grad_blocks.append(_batch_vjp(block, v_mat))
 
-        n_pair = parameterization.n_pair_params_per_layer
-        if n_pair:
-            pair_blocks = []
+        n_diag = getattr(
+            parameterization,
+            "n_diag_params_per_layer",
+            parameterization.n_pair_params_per_layer,
+        )
+        if n_diag:
+            diag_blocks = []
             for idx in range(layers):
                 d_after_diag = (
                     1j
                     * diag_feature_tensor
                     * runtime["after_diag"][idx][None, :, :]
                 )
-                pair_blocks.append(
+                diag_blocks.append(
                     _propagate_layered_after_diagonal(
                         runtime, idx, d_after_diag
                     )
                 )
             if parameterization.shared_diagonal:
-                grad_blocks.append(_batch_vjp(np.sum(pair_blocks, axis=0), v_mat))
+                grad_blocks.append(_batch_vjp(np.sum(diag_blocks, axis=0), v_mat))
             else:
-                grad_blocks.extend(_batch_vjp(block, v_mat) for block in pair_blocks)
+                grad_blocks.extend(_batch_vjp(block, v_mat) for block in diag_blocks)
 
         n_middle = parameterization.n_middle_orbital_rotation_params_per_layer
         if n_middle:
@@ -1049,7 +1115,9 @@ def make_restricted_gcr_vjp(
     reference_vec: np.ndarray,
     nelec: tuple[int, int],
 ) -> Callable[[np.ndarray, np.ndarray], np.ndarray]:
-    if isinstance(parameterization, IGCR2SpinRestrictedParameterization):
+    if isinstance(parameterization, IGCR2SpinRestrictedParameterization) or getattr(
+        parameterization, "layers", 1
+    ) > 1:
         return make_layered_igcr2_vjp(parameterization, reference_vec, nelec)
 
     jac = make_restricted_gcr_jacobian(parameterization, reference_vec, nelec)
@@ -1070,7 +1138,9 @@ def make_restricted_gcr_jacobian(
     reference_vec: np.ndarray,
     nelec: tuple[int, int],
 ) -> Callable[[np.ndarray], np.ndarray]:
-    if isinstance(parameterization, IGCR2SpinRestrictedParameterization):
+    if isinstance(parameterization, IGCR2SpinRestrictedParameterization) or getattr(
+        parameterization, "layers", 1
+    ) > 1:
         return make_layered_igcr2_jacobian(
             parameterization, reference_vec, nelec
         )
@@ -1196,7 +1266,9 @@ def make_restricted_gcr_subspace_jacobian(
     Unlike :func:`make_restricted_gcr_jacobian`, this does not materialise the
     full tangent matrix. Its cost scales with the number of requested directions.
     """
-    if isinstance(parameterization, IGCR2SpinRestrictedParameterization):
+    if isinstance(parameterization, IGCR2SpinRestrictedParameterization) or getattr(
+        parameterization, "layers", 1
+    ) > 1:
         return make_layered_igcr2_subspace_jacobian(
             parameterization, reference_vec, nelec
         )

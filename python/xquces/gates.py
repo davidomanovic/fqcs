@@ -3,7 +3,6 @@ from __future__ import annotations
 import numpy as np
 
 from xquces._lib import apply_igcr2_spin_restricted_in_place_num_rep
-from xquces._lib import apply_igcr4_pair_spin_in_place_num_rep
 from xquces._lib import apply_ucj_spin_balanced_in_place_num_rep
 from xquces._lib import apply_ucj_spin_restricted_in_place_num_rep
 from xquces.basis import flatten_state, occ_indicator_rows, occ_rows, reshape_state

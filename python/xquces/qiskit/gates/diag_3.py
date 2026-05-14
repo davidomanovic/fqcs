@@ -19,6 +19,28 @@ from xquces.qiskit.gates.diag_2 import (
     _as_square_real_matrix,
     _nonzero,
 )
+from xquces.qiskit.gates.phase_polynomial import (
+    PhasePolynomialJW,
+    add_spin_restricted_diag2_number_products,
+    add_spin_restricted_diag3_number_products,
+)
+
+
+_DIAGONAL_SYNTHESIS_MODES = frozenset({"naive", "phase_polynomial"})
+
+
+def _validate_diagonal_synthesis(synthesis: str) -> str:
+    if synthesis not in _DIAGONAL_SYNTHESIS_MODES:
+        allowed = ", ".join(sorted(_DIAGONAL_SYNTHESIS_MODES))
+        raise ValueError(f"synthesis must be one of {{{allowed}}}")
+    return synthesis
+
+
+def _validate_threshold(threshold: float) -> float:
+    threshold = float(threshold)
+    if not np.isfinite(threshold) or threshold < 0.0:
+        raise ValueError("threshold must be a non-negative finite float")
+    return threshold
 
 
 def _as_omega_vector(omega_values: np.ndarray, norb: int) -> np.ndarray:
@@ -72,6 +94,8 @@ class Diag3SpinRestrictedJW(Gate):
         *,
         time: float = 1.0,
         label: str | None = None,
+        synthesis: str = "phase_polynomial",
+        threshold: float = 0.0,
     ):
         self.norb = int(norb)
         self.double_params = _as_real_vector(double_params, self.norb, "double_params")
@@ -79,6 +103,8 @@ class Diag3SpinRestrictedJW(Gate):
         self.tau_params = _as_square_real_matrix(tau_params, self.norb, "tau_params")
         self.omega_values = _as_omega_vector(omega_values, self.norb)
         self.time = float(time)
+        self.synthesis = _validate_diagonal_synthesis(synthesis)
+        self.threshold = _validate_threshold(threshold)
         super().__init__("igcr3_diag3_restricted_jw", 2 * self.norb, [], label=label)
 
     def _define(self) -> None:
@@ -92,6 +118,8 @@ class Diag3SpinRestrictedJW(Gate):
             self.omega_values,
             self.time,
             self.norb,
+            synthesis=self.synthesis,
+            threshold=self.threshold,
         ):
             circuit.append(instruction)
         self.definition = circuit
@@ -105,6 +133,8 @@ class Diag3SpinRestrictedJW(Gate):
             self.omega_values,
             time=-self.time,
             label=self.label,
+            synthesis=self.synthesis,
+            threshold=self.threshold,
         )
 
 
@@ -116,9 +146,37 @@ def _diag3_spin_restricted_jw(
     omega_values: np.ndarray,
     time: float,
     norb: int,
+    *,
+    synthesis: str = "phase_polynomial",
+    threshold: float = 0.0,
 ) -> Iterator[CircuitInstruction]:
     if len(qubits) != 2 * norb:
         raise ValueError("Expected 2 * norb qubits.")
+
+    synthesis = _validate_diagonal_synthesis(synthesis)
+    threshold = _validate_threshold(threshold)
+
+    if synthesis == "phase_polynomial":
+        coeffs: dict[tuple[int, ...], float] = {}
+        add_spin_restricted_diag2_number_products(
+            coeffs,
+            norb,
+            double_params,
+            pair_params,
+            time=time,
+        )
+        add_spin_restricted_diag3_number_products(
+            coeffs,
+            norb,
+            tau_params,
+            omega_values,
+            time=time,
+        )
+        yield CircuitInstruction(
+            PhasePolynomialJW(coeffs, 2 * norb, threshold=threshold),
+            tuple(qubits),
+        )
+        return
 
     yield CircuitInstruction(
         Diag2SpinRestrictedJW(

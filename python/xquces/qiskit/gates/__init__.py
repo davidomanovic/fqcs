@@ -24,6 +24,12 @@ from xquces.qiskit.gates.orbital_rotations import (
     OrbitalRotationJW,
     OrbitalRotationSpinlessJW,
 )
+from xquces.qiskit.gates.phase_polynomial import (
+    PhasePolynomialJW,
+    add_number_product_phase,
+    number_product_pauli_z_coefficients,
+    synthesize_pauli_z_phase_polynomial,
+)
 from xquces.qiskit.gates.product_pair_uccd import (
     PairRegisterUCCDGivensJW,
     PairUCCDRotationJW,
@@ -47,7 +53,9 @@ __all__ = [
     "OrbitalRotationSpinlessJW",
     "PairRegisterUCCDGivensJW",
     "PairUCCDRotationJW",
+    "PhasePolynomialJW",
     "ProductPairUCCDJW",
+    "add_number_product_phase",
     "gcr_product_pair_uccd_stateprep_jw_circuit",
     "igcr2_jw_circuit",
     "igcr2_stateprep_jw_circuit",
@@ -55,10 +63,12 @@ __all__ = [
     "igcr3_stateprep_jw_circuit",
     "igcr4_jw_circuit",
     "igcr4_stateprep_jw_circuit",
+    "number_product_pauli_z_coefficients",
     "product_pair_uccd_igcr_stateprep_jw_circuit",
     "product_pair_uccd_jw_circuit",
     "product_pair_uccd_pair_register_stateprep_jw_circuit",
     "product_pair_uccd_stateprep_jw_circuit",
     "spin_balanced_circuit_gauge",
     "spin_balanced_rzz_circuit_gauge",
+    "synthesize_pauli_z_phase_polynomial",
 ]
