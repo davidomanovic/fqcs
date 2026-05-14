@@ -58,11 +58,24 @@ def _phase_polynomial_number_product_circuit(
     nqubits: int,
     theta: float,
     indices: tuple[int, ...],
+    *,
+    synthesis: str = "parity_gadgets",
 ) -> QuantumCircuit:
     coeffs: dict[tuple[int, ...], float] = {}
     add_number_product_phase(coeffs, theta, indices)
     circuit = QuantumCircuit(nqubits)
-    circuit.append(PhasePolynomialJW(coeffs, nqubits), circuit.qubits)
+    circuit.append(PhasePolynomialJW(coeffs, nqubits, synthesis=synthesis), circuit.qubits)
+    return circuit
+
+
+def _phase_polynomial_circuit(
+    coeffs: dict[tuple[int, ...], float],
+    nqubits: int,
+    *,
+    synthesis: str,
+) -> QuantumCircuit:
+    circuit = QuantumCircuit(nqubits)
+    circuit.append(PhasePolynomialJW(coeffs, nqubits, synthesis=synthesis), circuit.qubits)
     return circuit
 
 
@@ -197,6 +210,49 @@ def test_number_product_phase_polynomial_identity():
         )
 
 
+def test_number_product_parity_network_identity():
+    rng = np.random.default_rng(4321)
+    supports = ((0,), (0, 2), (0, 2, 3), (0, 1, 3, 4))
+    for support in supports:
+        theta = float(rng.normal(scale=0.5))
+        nqubits = max(support) + 1
+        _assert_equivalent_up_to_global_phase(
+            _phase_polynomial_number_product_circuit(
+                nqubits,
+                theta,
+                support,
+                synthesis="parity_network",
+            ),
+            _naive_number_product_circuit(nqubits, theta, support),
+        )
+
+
+def test_parity_network_matches_parity_gadgets_for_collected_polynomial():
+    coeffs = {
+        (0, 1, 2): 0.11,
+        (0, 1, 3): -0.07,
+        (0, 1, 2, 3): 0.13,
+        (1, 2, 3): -0.17,
+        (0,): 0.19,
+    }
+    _assert_equivalent_up_to_global_phase(
+        _phase_polynomial_circuit(coeffs, 4, synthesis="parity_network"),
+        _phase_polynomial_circuit(coeffs, 4, synthesis="parity_gadgets"),
+    )
+
+
+def test_parity_network_can_reduce_cx_count_for_overlapping_terms():
+    coeffs = {
+        (0, 1, 2): 0.11,
+        (0, 1, 3): -0.07,
+        (0, 1, 2, 3): 0.13,
+        (1, 2, 3): -0.17,
+    }
+    gadgets = PhasePolynomialJW(coeffs, 4, synthesis="parity_gadgets").definition
+    network = PhasePolynomialJW(coeffs, 4, synthesis="parity_network").definition
+    assert network.count_ops().get("cx", 0) < gadgets.count_ops().get("cx", 0)
+
+
 def test_diag3_naive_and_phase_polynomial_match():
     rng = np.random.default_rng(2024)
     norb = 3
@@ -208,6 +264,17 @@ def test_diag3_naive_and_phase_polynomial_match():
     )
 
 
+def test_diag3_naive_and_parity_network_match():
+    rng = np.random.default_rng(2026)
+    norb = 3
+    params = _random_diag3_params(rng, norb)
+
+    _assert_equivalent_up_to_global_phase(
+        _diag3_circuit(norb, params, synthesis="parity_network"),
+        _diag3_circuit(norb, params, synthesis="naive"),
+    )
+
+
 def test_diag4_naive_and_phase_polynomial_match():
     rng = np.random.default_rng(2025)
     norb = 4
@@ -215,6 +282,17 @@ def test_diag4_naive_and_phase_polynomial_match():
 
     _assert_equivalent_up_to_global_phase(
         _diag4_circuit(norb, params, synthesis="phase_polynomial"),
+        _diag4_circuit(norb, params, synthesis="naive"),
+    )
+
+
+def test_diag4_naive_and_parity_network_match():
+    rng = np.random.default_rng(2027)
+    norb = 4
+    params = _random_diag4_params(rng, norb)
+
+    _assert_equivalent_up_to_global_phase(
+        _diag4_circuit(norb, params, synthesis="parity_network"),
         _diag4_circuit(norb, params, synthesis="naive"),
     )
 
@@ -243,6 +321,20 @@ def test_igcr3_igcr4_public_api_accepts_naive_diagonal_synthesis():
     )
 
 
+def test_igcr3_igcr4_public_api_accepts_parity_network_diagonal_synthesis():
+    igcr3 = _igcr3_ansatz()
+    igcr4 = _igcr4_ansatz()
+
+    assert (
+        igcr3_stateprep_jw_circuit(igcr3, diagonal_synthesis="parity_network").num_qubits
+        == 2 * igcr3.norb
+    )
+    assert (
+        igcr4_stateprep_jw_circuit(igcr4, diagonal_synthesis="parity_network").num_qubits
+        == 2 * igcr4.norb
+    )
+
+
 def test_phase_polynomial_threshold_skips_all_terms():
     coeffs = {
         (0,): 0.1,
@@ -250,6 +342,18 @@ def test_phase_polynomial_threshold_skips_all_terms():
         (1, 2, 3): 0.3,
     }
     gate = PhasePolynomialJW(coeffs, 4, threshold=1.0)
+    ops = gate.definition.count_ops()
+    assert ops.get("cx", 0) == 0
+    assert ops.get("rz", 0) == 0
+
+
+def test_parity_network_threshold_skips_all_terms():
+    coeffs = {
+        (0,): 0.1,
+        (0, 1): -0.2,
+        (1, 2, 3): 0.3,
+    }
+    gate = PhasePolynomialJW(coeffs, 4, threshold=1.0, synthesis="parity_network")
     ops = gate.definition.count_ops()
     assert ops.get("cx", 0) == 0
     assert ops.get("rz", 0) == 0
