@@ -166,7 +166,7 @@ def synthesize_pauli_z_phase_polynomial(
     nqubits = len(qubits)
     terms = _active_pauli_z_terms(coeffs, nqubits, threshold)
 
-    if synthesis in {"balanced_parity_gadgets", "parity_network"}:
+    if synthesis == "balanced_parity_gadgets":
         yield from synthesize_pauli_z_phase_polynomial_balanced_parity_gadgets(
             dict(terms),
             qubits,
@@ -198,12 +198,17 @@ def synthesize_pauli_z_phase_polynomial_parity_network(
     *,
     threshold: float = 0.0,
 ) -> Iterator[CircuitInstruction]:
-    """Yield all-to-all balanced parity-gadget instructions."""
-    yield from synthesize_pauli_z_phase_polynomial_balanced_parity_gadgets(
-        coeffs,
-        qubits,
-        threshold=threshold,
-    )
+    """Yield the default ladder phase-polynomial synthesis.
+
+    Dense iGCR3/iGCR4 all-to-all benchmarks favor the ladder phase-gadget
+    ordering because downstream transpilation cancels adjacent CNOT structure
+    more effectively than the experimental shared or balanced parity networks.
+    """
+    threshold = _validate_threshold(threshold)
+    nqubits = len(qubits)
+    terms = _active_pauli_z_terms(coeffs, nqubits, threshold)
+    for support, coeff in terms:
+        yield from _yield_ladder_phase_gadget(support, coeff, qubits)
 
 
 class PhasePolynomialJW(Gate):
