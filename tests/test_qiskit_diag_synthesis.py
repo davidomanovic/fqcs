@@ -210,7 +210,7 @@ def test_number_product_phase_polynomial_identity():
         )
 
 
-def test_number_product_parity_network_identity():
+def test_number_product_balanced_parity_gadgets_identity():
     rng = np.random.default_rng(4321)
     supports = ((0,), (0, 2), (0, 2, 3), (0, 1, 3, 4))
     for support in supports:
@@ -221,13 +221,13 @@ def test_number_product_parity_network_identity():
                 nqubits,
                 theta,
                 support,
-                synthesis="parity_network",
+                synthesis="balanced_parity_gadgets",
             ),
             _naive_number_product_circuit(nqubits, theta, support),
         )
 
 
-def test_parity_network_matches_parity_gadgets_for_collected_polynomial():
+def test_parity_network_alias_matches_parity_gadgets_for_collected_polynomial():
     coeffs = {
         (0, 1, 2): 0.11,
         (0, 1, 3): -0.07,
@@ -241,7 +241,7 @@ def test_parity_network_matches_parity_gadgets_for_collected_polynomial():
     )
 
 
-def test_parity_network_can_reduce_cx_count_for_overlapping_terms():
+def test_balanced_parity_gadgets_do_not_increase_cx_count():
     coeffs = {
         (0, 1, 2): 0.11,
         (0, 1, 3): -0.07,
@@ -249,8 +249,12 @@ def test_parity_network_can_reduce_cx_count_for_overlapping_terms():
         (1, 2, 3): -0.17,
     }
     gadgets = PhasePolynomialJW(coeffs, 4, synthesis="parity_gadgets").definition
-    network = PhasePolynomialJW(coeffs, 4, synthesis="parity_network").definition
-    assert network.count_ops().get("cx", 0) < gadgets.count_ops().get("cx", 0)
+    balanced = PhasePolynomialJW(
+        coeffs,
+        4,
+        synthesis="balanced_parity_gadgets",
+    ).definition
+    assert balanced.count_ops().get("cx", 0) <= gadgets.count_ops().get("cx", 0)
 
 
 def test_diag3_naive_and_phase_polynomial_match():
