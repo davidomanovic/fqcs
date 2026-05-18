@@ -248,6 +248,29 @@ class TestIGCR2ParameterizationFromTAmplitudes:
         x = param.parameters_from_t_amplitudes(t2)
         assert x.shape == (param.n_params,)
 
+    @pytest.mark.parametrize("layers", [1, 2])
+    def test_default_seed_is_ucj_lift(self, layers):
+        nocc, nvirt = 2, 3
+        norb = nocc + nvirt
+        t2 = _small_t2(nocc, nvirt)
+        t1 = _small_t1(nocc, nvirt)
+        param = IGCR2SpinRestrictedParameterization(
+            norb=norb,
+            nocc=nocc,
+            layers=layers,
+        )
+        x_default = param.parameters_from_t_amplitudes(t2, t1=t1)
+        x_ucj = param.parameters_from_t_amplitudes(t2, t1=t1, strategy="ucj")
+        assert np.allclose(x_default, x_ucj, atol=1e-14)
+
+    def test_residual_seed_is_not_defined_for_igcr2(self):
+        nocc, nvirt = 2, 3
+        norb = nocc + nvirt
+        t2 = _small_t2(nocc, nvirt)
+        param = IGCR2SpinRestrictedParameterization(norb=norb, nocc=nocc)
+        with pytest.raises(ValueError, match="only defined for iGCR3/iGCR4"):
+            param.parameters_from_t_amplitudes(t2, strategy="ccsd_residual")
+
     def test_two_layer_pair_blocks_differ(self):
         """The pair parameter blocks for layer 0 and layer 1 must differ."""
         nocc, nvirt = 2, 3

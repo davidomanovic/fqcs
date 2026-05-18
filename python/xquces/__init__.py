@@ -63,6 +63,14 @@ from xquces.gcr.references import (
     apply_ansatz_parameterization,
     make_composite_reference_ansatz_jacobian,
 )
+from xquces.connectivity import (
+    all_to_all_indices,
+    directed_pairs,
+    rho_from_triples,
+    sparse_indices_from_sets,
+    topology_indices,
+)
+
 from xquces.hamiltonians import (
     CanonicalTransformedHamiltonianLinearOperator,
     MolecularHamiltonianLinearOperator,

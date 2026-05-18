@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import numpy as np
 from qiskit import QuantumCircuit
-from qiskit.quantum_info import Operator
+from qiskit.quantum_info import Operator, Statevector
 
 from xquces.gcr.igcr import (
     IGCR3Ansatz,
+    IGCR3SpinRestrictedParameterization,
     IGCR3SpinRestrictedSpec,
     IGCR4Ansatz,
+    IGCR4SpinRestrictedParameterization,
     IGCR4SpinRestrictedSpec,
 )
 from xquces.gcr.utils import (
@@ -39,6 +41,19 @@ def _assert_equivalent_up_to_global_phase(
     lhs_data = Operator(lhs).data
     rhs_data = Operator(rhs).data
     overlap = np.vdot(rhs_data.ravel(), lhs_data.ravel())
+    phase = overlap / abs(overlap)
+    assert np.allclose(lhs_data, phase * rhs_data, atol=atol)
+
+
+def _assert_same_state_up_to_global_phase(
+    lhs: QuantumCircuit,
+    rhs: QuantumCircuit,
+    *,
+    atol: float = 1e-10,
+) -> None:
+    lhs_data = Statevector.from_instruction(lhs).data
+    rhs_data = Statevector.from_instruction(rhs).data
+    overlap = np.vdot(rhs_data, lhs_data)
     phase = overlap / abs(overlap)
     assert np.allclose(lhs_data, phase * rhs_data, atol=atol)
 
@@ -336,6 +351,43 @@ def test_igcr3_igcr4_public_api_accepts_parity_network_diagonal_synthesis():
     assert (
         igcr4_stateprep_jw_circuit(igcr4, diagonal_synthesis="parity_network").num_qubits
         == 2 * igcr4.norb
+    )
+
+
+def test_layered_igcr3_stateprep_phase_polynomial_matches_naive():
+    rng = np.random.default_rng(31415)
+    param = IGCR3SpinRestrictedParameterization(
+        norb=3,
+        nocc=1,
+        layers=2,
+        reduce_cubic_gauge=False,
+    )
+    ansatz = param.ansatz_from_parameters(
+        rng.normal(scale=0.05, size=param.n_params)
+    )
+
+    _assert_same_state_up_to_global_phase(
+        igcr3_stateprep_jw_circuit(ansatz, diagonal_synthesis="phase_polynomial"),
+        igcr3_stateprep_jw_circuit(ansatz, diagonal_synthesis="naive"),
+    )
+
+
+def test_layered_igcr4_stateprep_phase_polynomial_matches_naive():
+    rng = np.random.default_rng(27182)
+    param = IGCR4SpinRestrictedParameterization(
+        norb=4,
+        nocc=2,
+        layers=2,
+        reduce_cubic_gauge=False,
+        reduce_quartic_gauge=False,
+    )
+    ansatz = param.ansatz_from_parameters(
+        rng.normal(scale=0.04, size=param.n_params)
+    )
+
+    _assert_same_state_up_to_global_phase(
+        igcr4_stateprep_jw_circuit(ansatz, diagonal_synthesis="phase_polynomial"),
+        igcr4_stateprep_jw_circuit(ansatz, diagonal_synthesis="naive"),
     )
 
 
