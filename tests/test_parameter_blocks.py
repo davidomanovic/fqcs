@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from xquces.ansatz import (
     DiagonalCorrelatorGate,
@@ -13,11 +14,13 @@ from xquces.gcr.igcr import (
     IGCR2SpinBalancedParameterization,
     IGCR2SpinRestrictedParameterization,
     IGCR3SpinRestrictedParameterization,
+    IGCRSpinRestrictedParameterization,
     parameter_blocks,
     parameter_view,
 )
 from xquces.gcr.product_pair_uccd import PairUCCDStateParameterization
 from xquces.gcr.references import CompositeReferenceAnsatzParameterization
+from xquces.states import hartree_fock_state
 from xquces.charts.reductions import (
     IGCR3CubicReduction as ChartIGCR3CubicReduction,
     IGCR4QuarticReduction as ChartIGCR4QuarticReduction,
@@ -32,6 +35,23 @@ from xquces.presets import IGCR, PairUCCD_GCR
 
 def _blocks_by_name(parameterization):
     return {block.name: block for block in parameter_blocks(parameterization)}
+
+
+def _assert_allclose_up_to_phase(actual, expected, *, atol=1.0e-12):
+    actual = np.asarray(actual, dtype=np.complex128)
+    expected = np.asarray(expected, dtype=np.complex128)
+    phase = np.vdot(expected, actual)
+    if abs(phase) > 1.0e-14:
+        actual = actual * phase.conjugate() / abs(phase)
+    np.testing.assert_allclose(actual, expected, atol=atol)
+
+
+def _legacy_block_name(sequence_block_name: str) -> str:
+    return {
+        "diagonal.pair": "pair",
+        "diagonal.cubic": "cubic",
+        "diagonal.quartic": "quartic",
+    }.get(sequence_block_name, sequence_block_name)
 
 
 def test_layered_igcr3_parameter_blocks_have_shapes_and_kinds():
@@ -256,3 +276,100 @@ def test_gate_sequence_can_reproduce_one_layer_igcr2_ansatz():
         sequence_ansatz.diagonal.pair,
         legacy_ansatz.diagonal.pair,
     )
+
+
+def test_igcr_sequence_backend_matches_legacy_one_layer_blocks_and_state():
+    reference = hartree_fock_state(4, (2, 2))
+    rng = np.random.default_rng(1234)
+    for order in (2, 3, 4):
+        legacy = IGCR(order=order, norb=4, nocc=2).implementation
+        sequence = IGCR(order=order, norb=4, nocc=2, backend="sequence")
+        zero_params = np.zeros(legacy.n_params, dtype=np.float64)
+        random_params = rng.normal(scale=1.0e-3, size=legacy.n_params)
+
+        assert sequence.n_params == legacy.n_params
+        sequence_blocks = sequence.parameter_blocks()
+        legacy_blocks = {block.name: block for block in parameter_blocks(legacy)}
+        assert tuple(block.name for block in sequence_blocks) == (
+            "left",
+            "diagonal.pair",
+            *(() if order == 2 else ("diagonal.cubic",)),
+            *(() if order < 4 else ("diagonal.quartic",)),
+            "right",
+        )
+        for sequence_block in sequence_blocks:
+            legacy_block = legacy_blocks[_legacy_block_name(sequence_block.name)]
+            assert sequence_block.start == legacy_block.start
+            assert sequence_block.stop == legacy_block.stop
+            assert sequence_block.size == legacy_block.size
+            assert sequence_block.shape == legacy_block.shape
+            assert sequence_block.kind == legacy_block.kind
+
+        for params in (zero_params, random_params):
+            legacy_state = legacy.ansatz_from_parameters(params).apply(
+                reference,
+                nelec=(2, 2),
+                copy=True,
+            )
+            sequence_state = sequence.ansatz_from_parameters(params).apply(
+                reference,
+                nelec=(2, 2),
+                copy=True,
+            )
+            _assert_allclose_up_to_phase(sequence_state, legacy_state, atol=1.0e-12)
+            _assert_allclose_up_to_phase(
+                sequence.params_to_vec(reference)(params),
+                legacy_state,
+                atol=1.0e-12,
+            )
+            _assert_allclose_up_to_phase(
+                sequence.apply(reference).params_to_vec()(params),
+                legacy_state,
+                atol=1.0e-12,
+            )
+
+
+def test_igcr_sequence_backend_parameters_from_ansatz_matches_legacy_gauge():
+    reference = hartree_fock_state(4, (2, 2))
+    rng = np.random.default_rng(5678)
+
+    for order in (2, 3, 4):
+        legacy = IGCR(order=order, norb=4, nocc=2).implementation
+        sequence = IGCR(order=order, norb=4, nocc=2, backend="sequence")
+        params = rng.normal(scale=1.0e-3, size=sequence.n_params)
+
+        roundtrip = sequence.parameters_from_ansatz(
+            sequence.ansatz_from_parameters(params)
+        )
+        legacy_roundtrip = legacy.parameters_from_ansatz(
+            legacy.ansatz_from_parameters(params)
+        )
+
+        assert roundtrip.shape == params.shape
+        assert np.all(np.isfinite(roundtrip))
+        np.testing.assert_allclose(roundtrip, legacy_roundtrip, atol=1.0e-10)
+        _assert_allclose_up_to_phase(
+            sequence.params_to_vec(reference)(roundtrip),
+            sequence.params_to_vec(reference)(params),
+            atol=1.0e-10,
+        )
+
+
+def test_igcr_sequence_backend_is_opt_in_and_rejects_unsupported_cases():
+    default_parameterization = IGCR(order=3, norb=4, nocc=2)
+
+    assert isinstance(default_parameterization, IGCRSpinRestrictedParameterization)
+    assert not isinstance(default_parameterization, GateSequenceParameterization)
+    assert isinstance(
+        IGCR(order=3, norb=4, nocc=2, backend="sequence"),
+        GateSequenceParameterization,
+    )
+
+    with pytest.raises(ValueError, match="layers=1"):
+        IGCR(order=2, norb=4, nocc=2, layers=2, backend="sequence")
+    with pytest.raises(ValueError, match="shared_diagonal"):
+        IGCR(order=2, norb=4, nocc=2, shared_diagonal=True, backend="sequence")
+    with pytest.raises(ValueError, match="spin='restricted'"):
+        IGCR(order=2, norb=4, nocc=2, spin="balanced", backend="sequence")
+    with pytest.raises(ValueError, match="order must be 2, 3, or 4"):
+        IGCR(order=5, norb=4, nocc=2, backend="sequence")
