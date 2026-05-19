@@ -7,7 +7,11 @@ from xquces.ansatz import (
     DiagonalCorrelatorGate,
     GateSequenceParameterization,
     OrbitalRotationGate,
+    parameter_blocks as ansatz_parameter_blocks,
+    random_parameters as ansatz_random_parameters,
 )
+from xquces.ansatz.blocks import parameter_view as ansatz_parameter_view
+from xquces.ansatz.parameters import ParameterBlock
 from xquces.gcr.igcr import (
     IGCR2Ansatz,
     IGCR2SpinRestrictedSpec,
@@ -52,6 +56,13 @@ def _legacy_block_name(sequence_block_name: str) -> str:
         "diagonal.cubic": "cubic",
         "diagonal.quartic": "quartic",
     }.get(sequence_block_name, sequence_block_name)
+
+
+def _block_metadata(blocks):
+    return tuple(
+        (block.name, block.start, block.stop, block.shape, block.kind)
+        for block in blocks
+    )
 
 
 def test_layered_igcr3_parameter_blocks_have_shapes_and_kinds():
@@ -373,3 +384,132 @@ def test_igcr_sequence_backend_is_opt_in_and_rejects_unsupported_cases():
         IGCR(order=2, norb=4, nocc=2, spin="balanced", backend="sequence")
     with pytest.raises(ValueError, match="order must be 2, 3, or 4"):
         IGCR(order=5, norb=4, nocc=2, backend="sequence")
+
+
+def test_ansatz_blocks_preserve_legacy_igcr_block_metadata():
+    expected = {
+        2: (
+            ("left", 0, 12, (12,), "orbital"),
+            ("pair", 12, 18, (6,), "diagonal"),
+            ("right", 18, 26, (8,), "orbital"),
+        ),
+        3: (
+            ("left", 0, 12, (12,), "orbital"),
+            ("pair", 12, 18, (6,), "diagonal"),
+            ("cubic", 18, 24, (6,), "diagonal"),
+            ("right", 24, 32, (8,), "orbital"),
+        ),
+        4: (
+            ("left", 0, 12, (12,), "orbital"),
+            ("pair", 12, 18, (6,), "diagonal"),
+            ("cubic", 18, 24, (6,), "diagonal"),
+            ("quartic", 24, 27, (3,), "diagonal"),
+            ("right", 27, 35, (8,), "orbital"),
+        ),
+    }
+
+    for order, metadata in expected.items():
+        parameterization = IGCR(order=order, norb=4, nocc=2).implementation
+
+        assert _block_metadata(ansatz_parameter_blocks(parameterization)) == metadata
+        assert _block_metadata(parameter_blocks(parameterization)) == metadata
+        assert parameter_blocks(parameterization)[-1].stop == parameterization.n_params
+
+
+def test_ansatz_blocks_support_sequence_backend_consistently():
+    for order in (2, 3, 4):
+        sequence = IGCR(order=order, norb=4, nocc=2, backend="sequence")
+        blocks = ansatz_parameter_blocks(sequence)
+
+        assert blocks == sequence.parameter_blocks()
+        assert blocks[-1].stop == sequence.n_params
+        assert sum(block.size for block in blocks) == sequence.n_params
+        assert all(block.start < block.stop for block in blocks)
+
+
+def test_composite_blocks_use_ansatz_block_module_directly():
+    composite = CompositeReferenceAnsatzParameterization(
+        PairUCCDStateParameterization(norb=4, nelec=(2, 2)),
+        IGCR(order=3, norb=4, nocc=2, backend="sequence"),
+        nelec=(2, 2),
+    )
+
+    assert (
+        CompositeReferenceAnsatzParameterization.parameter_blocks.__globals__[
+            "parameter_blocks"
+        ].__module__
+        == "xquces.ansatz.blocks"
+    )
+    assert (
+        CompositeReferenceAnsatzParameterization.parameter_view.__globals__[
+            "parameter_view"
+        ].__module__
+        == "xquces.ansatz.blocks"
+    )
+    assert tuple(block.name for block in composite.parameter_blocks()) == (
+        "reference",
+        "left",
+        "diagonal.pair",
+        "diagonal.cubic",
+        "right",
+    )
+    assert composite.parameter_blocks()[-1].stop == composite.n_params
+
+
+def test_block_compatibility_imports_delegate_to_ansatz_blocks():
+    import xquces.gcr as gcr
+    import xquces.gcr.igcr as igcr
+
+    parameterization = IGCR(order=4, norb=4, nocc=2).implementation
+
+    assert igcr.GCRParameterBlock is ParameterBlock
+    assert _block_metadata(igcr.parameter_blocks(parameterization)) == _block_metadata(
+        ansatz_parameter_blocks(parameterization)
+    )
+    assert _block_metadata(gcr.parameter_blocks(parameterization)) == _block_metadata(
+        ansatz_parameter_blocks(parameterization)
+    )
+    assert igcr.random_parameters(parameterization, seed=1).shape == (
+        parameterization.n_params,
+    )
+    assert gcr.random_parameters(parameterization, seed=1).shape == (
+        parameterization.n_params,
+    )
+
+
+def test_ansatz_parameter_view_works_for_legacy_and_sequence_backends():
+    for parameterization in (
+        IGCR(order=3, norb=4, nocc=2).implementation,
+        IGCR(order=3, norb=4, nocc=2, backend="sequence"),
+    ):
+        params = np.arange(parameterization.n_params, dtype=np.float64)
+        view = ansatz_parameter_view(parameterization, params)
+
+        assert view.names[0] == "left"
+        np.testing.assert_array_equal(view["left"], params[: view.block("left").size])
+        assert view.blocks[-1].stop == parameterization.n_params
+
+
+def test_ansatz_random_parameters_can_target_named_blocks():
+    for parameterization, kept_name in (
+        (IGCR(order=4, norb=4, nocc=2).implementation, "quartic"),
+        (IGCR(order=4, norb=4, nocc=2, backend="sequence"), "diagonal.quartic"),
+    ):
+        params = ansatz_random_parameters(
+            parameterization,
+            seed=99,
+            blocks={kept_name},
+        )
+        kept = ansatz_parameter_blocks(parameterization)
+
+        assert np.count_nonzero(params) == next(
+            block.size for block in kept if block.name == kept_name
+        )
+        for block in kept:
+            if block.name == kept_name:
+                assert np.count_nonzero(params[block.slice()]) == block.size
+            else:
+                np.testing.assert_array_equal(
+                    params[block.slice()],
+                    np.zeros(block.size, dtype=np.float64),
+                )

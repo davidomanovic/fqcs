@@ -7,11 +7,17 @@ import ffsim
 import numpy as np
 import scipy.linalg
 
-from xquces.ansatz.parameters import (
-    ParameterBlock,
-    ParameterView,
-    parameter_view as _parameter_view,
+from xquces.ansatz.blocks import (
+    _block_kind,
+    _block_shape,
+    _block_sizes,
+    _block_specs,
+    _layered_block_shape,
+    parameter_blocks as _ansatz_parameter_blocks,
+    parameter_view as _ansatz_parameter_view,
+    random_parameters as _ansatz_random_parameters,
 )
+from xquces.ansatz.parameters import ParameterBlock, ParameterView
 from xquces.charts.diagonal import (
     RestrictedPairChart,
     RestrictedPairCoefficients,
@@ -4608,169 +4614,12 @@ class IGCRVariationalCircuit:
         return params
 
 
-def _block_kind(name: str) -> str:
-    if name == "reference":
-        return "reference"
-    if name in {"left", "middle", "right"}:
-        return "orbital"
-    if name in {
-        "pair",
-        "same_diag",
-        "double",
-        "same_spin",
-        "mixed_spin",
-        "tau",
-        "omega",
-        "cubic",
-        "eta",
-        "rho",
-        "sigma",
-        "quartic",
-    }:
-        return "diagonal"
-    return "generic"
-
-
-def _layered_block_shape(
-    parameterization: object,
-    name: str,
-    size: int,
-) -> tuple[int, ...]:
-    if size == 0:
-        return (0,)
-    per_layer_attr = {
-        "pair": "n_pair_params_per_layer",
-        "tau": "n_tau_params_per_layer",
-        "omega": "n_omega_params_per_layer",
-        "cubic": "n_tau_params_per_layer",
-        "eta": "n_eta_params_per_layer",
-        "rho": "n_rho_params_per_layer",
-        "quartic": "n_rho_params_per_layer",
-        "sigma": "n_sigma_params_per_layer",
-        "middle": "n_middle_orbital_rotation_params_per_layer",
-    }.get(name)
-    if per_layer_attr is None or not hasattr(parameterization, per_layer_attr):
-        return (size,)
-    per_layer = int(getattr(parameterization, per_layer_attr))
-    if per_layer <= 0 or size % per_layer:
-        return (size,)
-    n_blocks = size // per_layer
-    if name == "middle":
-        return (n_blocks, per_layer)
-    if getattr(parameterization, "shared_diagonal", False) or n_blocks == 1:
-        return (per_layer,)
-    return (n_blocks, per_layer)
-
-
-def _block_shape(
-    parameterization: object,
-    name: str,
-    size: int,
-) -> tuple[int, ...]:
-    if name in {"same_diag", "double"} and hasattr(parameterization, "norb"):
-        norb = int(getattr(parameterization, "norb"))
-        if size == norb:
-            return (norb,)
-    return _layered_block_shape(parameterization, name, size)
-
-
-def _block_specs(parameterization: object) -> list[tuple[str, int, tuple[int, ...], str]]:
-    sizes = []
-    if hasattr(parameterization, "n_reference_params") and hasattr(
-        parameterization, "ansatz_parameterization"
-    ):
-        n_reference = int(getattr(parameterization, "n_reference_params", 0))
-        if n_reference:
-            sizes.append(("reference", n_reference, (n_reference,), "reference"))
-        sizes.extend(_block_specs(parameterization.ansatz_parameterization))
-        return sizes
-    if hasattr(parameterization, "ansatz_parameterization"):
-        return _block_specs(parameterization.ansatz_parameterization)
-
-    ordered_attrs = [("left", "n_left_orbital_rotation_params")]
-    if hasattr(parameterization, "n_same_diag_params"):
-        ordered_attrs.extend(
-            [
-                ("same_diag", "n_same_diag_params"),
-                ("double", "n_double_params"),
-                ("same_spin", "n_same_spin_params"),
-                ("mixed_spin", "n_mixed_spin_params"),
-            ]
-        )
-    else:
-        ordered_attrs.append(("pair", "n_pair_params"))
-    if hasattr(parameterization, "n_tau_params"):
-        if getattr(parameterization, "uses_reduced_cubic_chart", False):
-            ordered_attrs.append(("cubic", "n_tau_params"))
-        else:
-            ordered_attrs.extend(
-                [
-                    ("tau", "n_tau_params"),
-                    ("omega", "n_omega_params"),
-                ]
-            )
-    if hasattr(parameterization, "n_eta_params"):
-        if getattr(parameterization, "uses_reduced_quartic_chart", False):
-            ordered_attrs.append(("quartic", "n_rho_params"))
-        else:
-            ordered_attrs.extend(
-                [
-                    ("eta", "n_eta_params"),
-                    ("rho", "n_rho_params"),
-                    ("sigma", "n_sigma_params"),
-                ]
-            )
-    ordered_attrs.extend(
-        [
-            ("middle", "n_middle_orbital_rotation_params"),
-            ("right", "n_right_orbital_rotation_params"),
-        ]
-    )
-    for name, attr in ordered_attrs:
-        size = int(getattr(parameterization, attr, 0))
-        if size:
-            sizes.append(
-                (
-                    name,
-                    size,
-                    _block_shape(parameterization, name, size),
-                    _block_kind(name),
-                )
-            )
-    return sizes
-
-
-def _block_sizes(parameterization: object) -> list[tuple[str, int]]:
-    return [(name, size) for name, size, _, _ in _block_specs(parameterization)]
-
-
 def parameter_blocks(
     parameterization: object,
     *,
     frozen: tuple[str, ...] | list[str] | set[str] = (),
 ) -> tuple[GCRParameterBlock, ...]:
-    frozen_set = set(frozen)
-    blocks = []
-    start = 0
-    for name, size, shape, kind in _block_specs(parameterization):
-        stop = start + size
-        blocks.append(
-            GCRParameterBlock(
-                name=name,
-                start=start,
-                stop=stop,
-                shape=shape,
-                kind=kind,
-                frozen=name in frozen_set,
-            )
-        )
-        start = stop
-    if start != int(parameterization.n_params):
-        raise ValueError(
-            "parameter block sizes do not sum to n_params; "
-            f"got {start}, expected {parameterization.n_params}"
-        )
-    return tuple(blocks)
+    return _ansatz_parameter_blocks(parameterization, frozen=frozen)
 
 
 def parameter_view(
@@ -4780,13 +4629,10 @@ def parameter_view(
     frozen: tuple[str, ...] | list[str] | set[str] = (),
     copy: bool = False,
 ) -> ParameterView:
-    params = np.asarray(params, dtype=np.float64)
-    expected = int(parameterization.n_params)
-    if params.shape != (expected,):
-        raise ValueError(f"Expected {(expected,)}, got {params.shape}.")
-    return _parameter_view(
+    return _ansatz_parameter_view(
+        parameterization,
         params,
-        parameter_blocks(parameterization, frozen=frozen),
+        frozen=frozen,
         copy=copy,
     )
 
@@ -4798,16 +4644,12 @@ def random_parameters(
     seed: int | np.random.Generator | None = None,
     blocks: tuple[str, ...] | list[str] | set[str] | None = None,
 ) -> np.ndarray:
-    rng = seed if isinstance(seed, np.random.Generator) else np.random.default_rng(seed)
-    params = rng.normal(0.0, float(scale), int(parameterization.n_params))
-    if blocks is not None:
-        keep = set(blocks)
-        mask = np.zeros(int(parameterization.n_params), dtype=bool)
-        for block in parameter_blocks(parameterization):
-            if block.name in keep:
-                mask[block.slice()] = True
-        params = np.where(mask, params, 0.0)
-    return params.astype(np.float64, copy=False)
+    return _ansatz_random_parameters(
+        parameterization,
+        scale=scale,
+        seed=seed,
+        blocks=blocks,
+    )
 
 
 def embed_ansatz_parameters(parameterization: object, ansatz: object) -> np.ndarray:

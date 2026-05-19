@@ -5,6 +5,7 @@ from typing import Callable
 
 import numpy as np
 
+from xquces.ansatz.blocks import parameter_blocks, parameter_view
 from xquces.gcr.restricted_jacobian import (
     make_restricted_gcr_jacobian,
     make_restricted_gcr_subspace_jacobian,
@@ -39,13 +40,9 @@ class CompositeReferenceAnsatzParameterization:
         return params[:nref], params[nref:]
 
     def parameter_blocks(self, *, frozen=()):
-        from xquces.gcr.igcr import parameter_blocks
-
         return parameter_blocks(self, frozen=frozen)
 
     def parameter_view(self, params: np.ndarray, *, frozen=(), copy: bool = False):
-        from xquces.gcr.igcr import parameter_view
-
         return parameter_view(self, params, frozen=frozen, copy=copy)
 
     def reference_state_from_parameters(self, params: np.ndarray) -> np.ndarray:
@@ -187,13 +184,9 @@ class FixedReferenceAnsatzParameterization:
         return self.ansatz_parameterization.ansatz_from_parameters(params)
 
     def parameter_blocks(self, *, frozen=()):
-        from xquces.gcr.igcr import parameter_blocks
-
         return parameter_blocks(self, frozen=frozen)
 
     def parameter_view(self, params: np.ndarray, *, frozen=(), copy: bool = False):
-        from xquces.gcr.igcr import parameter_view
-
         return parameter_view(self, params, frozen=frozen, copy=copy)
 
     def state_from_parameters(self, params: np.ndarray) -> np.ndarray:
