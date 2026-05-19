@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from xquces.gcr import (
     IGCRAnsatz,
@@ -17,6 +18,7 @@ from xquces.gcr import (
     IGCR4SpinRestrictedParameterization,
     IGCR4SpinRestrictedSpec,
 )
+from xquces.gcr.canonical_layering import as_layered_igcr_ansatz
 from xquces.states import hartree_fock_state
 
 
@@ -187,6 +189,101 @@ def test_igcr4_legacy_ansatz_roundtrip_through_generic_preserves_state():
         generic.apply(ref, nelec),
         atol=1e-12,
     )
+
+
+def test_canonical_layering_splits_one_layer_diagonal_and_preserves_state():
+    rng = np.random.default_rng(111)
+    norb = 4
+    nocc = 2
+    nelec = (nocc, nocc)
+    spec = IGCR4SpinRestrictedSpec(
+        double_params=rng.normal(scale=0.01, size=norb),
+        pair_values=rng.normal(scale=0.01, size=6),
+        tau=rng.normal(scale=0.01, size=(norb, norb)),
+        omega_values=rng.normal(scale=0.01, size=4),
+        eta_values=rng.normal(scale=0.01, size=6),
+        rho_values=rng.normal(scale=0.01, size=12),
+        sigma_values=rng.normal(scale=0.01, size=1),
+    )
+    ansatz = IGCR4Ansatz(
+        diagonal=spec,
+        left=_random_unitary(rng, norb),
+        right=_random_unitary(rng, norb),
+        nocc=nocc,
+    ).to_generic()
+
+    layered = as_layered_igcr_ansatz(ansatz, 3, order=4)
+    assert layered.n_layers == 3
+    for diagonal in layered.diagonals:
+        np.testing.assert_allclose(diagonal.full_double(), ansatz.diagonals[0].full_double() / 3)
+        np.testing.assert_allclose(diagonal.pair_values, ansatz.diagonals[0].pair_values / 3)
+        np.testing.assert_allclose(diagonal.tau_matrix(), ansatz.diagonals[0].tau_matrix() / 3)
+        np.testing.assert_allclose(diagonal.omega_vector(), ansatz.diagonals[0].omega_vector() / 3)
+        np.testing.assert_allclose(diagonal.eta_vector(), ansatz.diagonals[0].eta_vector() / 3)
+        np.testing.assert_allclose(diagonal.rho_vector(), ansatz.diagonals[0].rho_vector() / 3)
+        np.testing.assert_allclose(diagonal.sigma_vector(), ansatz.diagonals[0].sigma_vector() / 3)
+
+    ref = hartree_fock_state(norb, nelec)
+    np.testing.assert_allclose(
+        layered.apply(ref, nelec),
+        ansatz.apply(ref, nelec),
+        atol=1e-12,
+    )
+
+
+def test_canonical_layering_pads_existing_layered_ansatz_before_final_rotation():
+    rng = np.random.default_rng(222)
+    norb = 4
+    nocc = 2
+    identity = np.eye(norb, dtype=np.complex128)
+    first = IGCRDiagonalCoefficients.from_igcr3_spec(
+        IGCR3SpinRestrictedSpec(
+            double_params=rng.normal(scale=0.01, size=norb),
+            pair_values=rng.normal(scale=0.01, size=6),
+            tau=rng.normal(scale=0.01, size=(norb, norb)),
+            omega_values=rng.normal(scale=0.01, size=4),
+        )
+    )
+    generic = IGCRAnsatz(
+        order=3,
+        diagonals=(first, first),
+        rotations=(identity, identity, _random_unitary(rng, norb)),
+        nocc=nocc,
+    )
+
+    padded = as_layered_igcr_ansatz(generic, 4, order=3)
+    assert padded.n_layers == 4
+    assert padded.rotations[-1] is not padded.rotations[-2]
+    np.testing.assert_allclose(padded.rotations[-1], generic.rotations[-1])
+    for diagonal in padded.diagonals[2:]:
+        assert not np.any(diagonal.full_double())
+        assert not np.any(diagonal.pair_values)
+        assert not np.any(diagonal.tau)
+        assert not np.any(diagonal.omega_values)
+
+
+@pytest.mark.parametrize(
+    "parameterization_cls, layered_cls",
+    [
+        (IGCR2SpinRestrictedParameterization, IGCR2LayeredAnsatz),
+        (IGCR3SpinRestrictedParameterization, IGCR3LayeredAnsatz),
+        (IGCR4SpinRestrictedParameterization, IGCR4LayeredAnsatz),
+    ],
+)
+def test_parameters_from_one_layer_ansatz_uses_canonical_layering_adapter(
+    parameterization_cls,
+    layered_cls,
+):
+    one_layer = parameterization_cls(norb=4, nocc=2, layers=1)
+    target = parameterization_cls(norb=4, nocc=2, layers=3)
+    one_layer_ansatz = one_layer.ansatz_from_parameters(np.zeros(one_layer.n_params))
+
+    params = target.parameters_from_ansatz(one_layer_ansatz)
+    embedded = target.ansatz_from_parameters(params)
+
+    assert isinstance(embedded, layered_cls)
+    assert embedded.layers == 3
+    assert embedded.to_generic().n_layers == 3
 
 
 def test_igcr2_spin_restricted_parameterization_returns_legacy_via_generic_builders():
