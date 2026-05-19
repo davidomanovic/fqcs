@@ -20,6 +20,25 @@ def _values_from_symmetric_matrix(
     return np.asarray([matrix[p, q] for p, q in indices], dtype=np.float64)
 
 
+def _as_spin_restricted_igcr_ansatz(
+    ansatz: IGCRAnsatz | object,
+    *,
+    order: int | None = None,
+) -> IGCRAnsatz:
+    if isinstance(ansatz, IGCRAnsatz):
+        if order is not None and ansatz.order != int(order):
+            return IGCRAnsatz(
+                order=int(order),
+                diagonals=ansatz.diagonals,
+                rotations=ansatz.rotations,
+                nocc=ansatz.nocc,
+            )
+        return ansatz
+    if getattr(ansatz, "is_spin_restricted", True) is False:
+        raise TypeError("expected a spin-restricted iGCR ansatz")
+    return IGCRAnsatz.from_legacy(ansatz, order=order)
+
+
 def relabel_igcr_diagonal_coefficients(
     diagonal: IGCRDiagonalCoefficients,
     old_for_new: np.ndarray,
@@ -140,9 +159,9 @@ def relabel_igcr_ansatz_orbitals(
     *,
     order: int | None = None,
 ) -> IGCRAnsatz:
-    """Relabel the orbital basis of a canonical iGCR ansatz."""
+    """Relabel the orbital basis of a canonical spin-restricted iGCR ansatz."""
 
-    generic = ansatz if isinstance(ansatz, IGCRAnsatz) else IGCRAnsatz.from_legacy(ansatz, order=order)
+    generic = _as_spin_restricted_igcr_ansatz(ansatz, order=order)
     if generic.norb != len(old_for_new):
         raise ValueError("orbital permutation length must match ansatz.norb")
     old_for_new = np.asarray(old_for_new, dtype=np.int64)
@@ -167,9 +186,9 @@ def transport_igcr_ansatz_orbitals(
     *,
     order: int | None = None,
 ) -> IGCRAnsatz:
-    """Transport the left orbital frame of a canonical iGCR ansatz."""
+    """Transport the left orbital frame of a canonical spin-restricted iGCR ansatz."""
 
-    generic = ansatz if isinstance(ansatz, IGCRAnsatz) else IGCRAnsatz.from_legacy(ansatz, order=order)
+    generic = _as_spin_restricted_igcr_ansatz(ansatz, order=order)
     basis_change = np.asarray(basis_change, dtype=np.complex128)
     if basis_change.shape != (generic.norb, generic.norb):
         raise ValueError(
