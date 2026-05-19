@@ -5,6 +5,8 @@ from typing import Callable
 
 import numpy as np
 
+from xquces.gcr.canonical import IGCRAnsatz, IGCRDiagonalCoefficients
+from xquces.gcr.canonical_layering import as_layered_igcr_ansatz
 from xquces.gcr.utils import (
     _diag_unitary,
     _final_unitary_from_left_and_right,
@@ -16,8 +18,9 @@ from xquces.gcr.utils import (
 
 @dataclass(frozen=True)
 class SpinRestrictedLayeredDiagonalParameterizationCore:
-    """Shared parameter mechanics for spin-restricted layered diagonal ansatze."""
+    """Canonical-native mechanics for spin-restricted layered iGCR ansätze."""
 
+    order: int
     norb: int
     nocc: int
     layers: int
@@ -26,11 +29,10 @@ class SpinRestrictedLayeredDiagonalParameterizationCore:
     middle_orbital_chart: object
     right_orbital_chart: object
     n_diag_params_per_layer: int
-    diagonal_from_parameters: Callable[[np.ndarray], object]
-    parameters_from_diagonal: Callable[[object], tuple[np.ndarray, np.ndarray]]
-    as_layered_ansatz: Callable[[object, int], object]
-    one_layer_ansatz_builder: Callable[[object, np.ndarray, np.ndarray], object]
-    layered_ansatz_builder: Callable[[tuple[object, ...], tuple[np.ndarray, ...]], object]
+    diagonal_from_parameters: Callable[[np.ndarray], IGCRDiagonalCoefficients]
+    parameters_from_diagonal: Callable[
+        [IGCRDiagonalCoefficients], tuple[np.ndarray, np.ndarray]
+    ]
     right_depends_on_prefix: bool = True
     project_final_reference_ov: bool = True
     left_right_ov_transform_scale: float | None = None
@@ -96,7 +98,7 @@ class SpinRestrictedLayeredDiagonalParameterizationCore:
             self.left_right_ov_transform_scale,
         )
 
-    def ansatz_from_parameters(self, params: np.ndarray) -> object:
+    def ansatz_from_parameters(self, params: np.ndarray) -> IGCRAnsatz:
         params = np.asarray(params, dtype=np.float64)
         if params.shape != (self.n_params,):
             raise ValueError(f"Expected {(self.n_params,)}, got {params.shape}.")
@@ -107,27 +109,23 @@ class SpinRestrictedLayeredDiagonalParameterizationCore:
             self.diagonal_from_parameters(block) for block in diagonal_params
         )
         right = self._right_from_final(left, middle_rotations, final)
-
-        if self.layers == 1:
-            return self.one_layer_ansatz_builder(diagonals[0], left, right)
-        return self.layered_ansatz_builder(
-            diagonals,
-            tuple([left, *middle_rotations, right]),
+        return IGCRAnsatz(
+            order=self.order,
+            diagonals=diagonals,
+            rotations=tuple([left, *middle_rotations, right]),
+            nocc=self.nocc,
         )
 
-    def parameters_from_ansatz(self, ansatz: object) -> np.ndarray:
-        if getattr(ansatz, "norb") != self.norb:
-            raise ValueError("ansatz norb does not match parameterization")
-        layered = self.as_layered_ansatz(ansatz, self.layers)
-        if getattr(layered, "nocc") != self.nocc:
-            raise ValueError("ansatz nocc does not match parameterization")
+    def parameters_from_ansatz(self, ansatz: IGCRAnsatz | object) -> np.ndarray:
+        generic = self._as_canonical_ansatz(ansatz)
+        layered = as_layered_igcr_ansatz(generic, self.layers, order=self.order)
 
         rotations = [
             np.asarray(rotation, dtype=np.complex128)
-            for rotation in getattr(layered, "rotations")
+            for rotation in layered.rotations
         ]
         diag_params = []
-        for layer_idx, diagonal in enumerate(getattr(layered, "diagonals")):
+        for layer_idx, diagonal in enumerate(layered.diagonals):
             params_i, phase_vec = self.parameters_from_diagonal(diagonal)
             diag_params.append(np.asarray(params_i, dtype=np.float64))
             rotations[layer_idx] = rotations[layer_idx] @ _diag_unitary(phase_vec)
@@ -138,6 +136,26 @@ class SpinRestrictedLayeredDiagonalParameterizationCore:
         idx = self._pack_middle(out, idx, rotation_params[1:])
         self._pack_right(out, idx, rotation_params, rotations[-1])
         return self.public_parameters_from_native(out)
+
+    def _as_canonical_ansatz(self, ansatz: IGCRAnsatz | object) -> IGCRAnsatz:
+        if isinstance(ansatz, IGCRAnsatz):
+            generic = ansatz
+        else:
+            if getattr(ansatz, "is_spin_restricted", True) is False:
+                raise TypeError("expected a spin-restricted iGCR ansatz")
+            generic = IGCRAnsatz.from_legacy(ansatz, order=self.order)
+        if generic.norb != self.norb:
+            raise ValueError("ansatz norb does not match parameterization")
+        if generic.nocc != self.nocc:
+            raise ValueError("ansatz nocc does not match parameterization")
+        if generic.order != self.order:
+            generic = IGCRAnsatz(
+                order=self.order,
+                diagonals=generic.diagonals,
+                rotations=generic.rotations,
+                nocc=generic.nocc,
+            )
+        return generic
 
     def _parse_native(
         self, params: np.ndarray

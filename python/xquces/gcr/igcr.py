@@ -320,6 +320,7 @@ class IGCR2SpinRestrictedParameterization:
     @property
     def _layered_core(self) -> SpinRestrictedLayeredDiagonalParameterizationCore:
         return SpinRestrictedLayeredDiagonalParameterizationCore(
+            order=2,
             norb=self.norb,
             nocc=self.nocc,
             layers=self.layers,
@@ -330,43 +331,11 @@ class IGCR2SpinRestrictedParameterization:
             n_diag_params_per_layer=self.diagonal_chart.n_params,
             diagonal_from_parameters=self._diagonal_from_native_parameters,
             parameters_from_diagonal=self._native_parameters_from_diagonal,
-            as_layered_ansatz=_as_layered_igcr2_spin_restricted_ansatz,
-            one_layer_ansatz_builder=self._one_layer_ansatz_from_core,
-            layered_ansatz_builder=self._layered_ansatz_from_core,
             right_depends_on_prefix=self._right_depends_on_prefix,
             project_final_reference_ov=False,
             left_right_ov_transform_scale=self._left_right_ov_transform_scale,
         )
 
-    def _one_layer_ansatz_from_core(
-        self,
-        diagonal: IGCR2SpinRestrictedSpec,
-        left: np.ndarray,
-        right: np.ndarray,
-    ) -> IGCR2Ansatz:
-        generic = IGCRAnsatz(
-            order=2,
-            diagonals=(IGCRDiagonalCoefficients.from_igcr2_spec(diagonal),),
-            rotations=(left, right),
-            nocc=self.nocc,
-        )
-        return generic.to_igcr2_ansatz()
-
-    def _layered_ansatz_from_core(
-        self,
-        diagonals: tuple[IGCR2SpinRestrictedSpec, ...],
-        rotations: tuple[np.ndarray, ...],
-    ) -> IGCR2LayeredAnsatz:
-        generic = IGCRAnsatz(
-            order=2,
-            diagonals=tuple(
-                IGCRDiagonalCoefficients.from_igcr2_spec(diagonal)
-                for diagonal in diagonals
-            ),
-            rotations=rotations,
-            nocc=self.nocc,
-        )
-        return generic.to_igcr2_ansatz()
 
     @property
     def n_left_orbital_rotation_params(self):
@@ -430,22 +399,25 @@ class IGCR2SpinRestrictedParameterization:
     def _diagonal_from_native_parameters(
         self,
         params: np.ndarray,
-    ) -> IGCR2SpinRestrictedSpec:
+    ) -> IGCRDiagonalCoefficients:
         coeffs = self.diagonal_chart.coefficients_from_parameters(params)
-        return IGCR2SpinRestrictedSpec(pair=coeffs.pair)
+        return IGCRDiagonalCoefficients.from_igcr2_spec(
+            IGCR2SpinRestrictedSpec(pair=coeffs.pair)
+        )
 
     def _native_parameters_from_diagonal(
         self,
-        diagonal: IGCR2SpinRestrictedSpec,
+        diagonal: IGCRDiagonalCoefficients,
     ) -> tuple[np.ndarray, np.ndarray]:
+        spec = diagonal.to_igcr2_spec()
         return self.diagonal_chart.parameters_from_coefficients(
-            RestrictedPairCoefficients(pair=np.asarray(diagonal.pair, dtype=np.float64))
+            RestrictedPairCoefficients(pair=np.asarray(spec.pair, dtype=np.float64))
         )
 
     def ansatz_from_parameters(self, params: np.ndarray):
-        return self._layered_core.ansatz_from_parameters(params)
+        return self._layered_core.ansatz_from_parameters(params).to_legacy()
 
-    def parameters_from_ansatz(self, ansatz: IGCR2Ansatz | IGCR2LayeredAnsatz):
+    def parameters_from_ansatz(self, ansatz: IGCRAnsatz | IGCR2Ansatz | IGCR2LayeredAnsatz):
         return self._layered_core.parameters_from_ansatz(ansatz)
 
     def parameters_from_t_amplitudes(
@@ -961,6 +933,7 @@ class IGCR3SpinRestrictedParameterization:
     @property
     def _layered_core(self) -> SpinRestrictedLayeredDiagonalParameterizationCore:
         return SpinRestrictedLayeredDiagonalParameterizationCore(
+            order=3,
             norb=self.norb,
             nocc=self.nocc,
             layers=self.layers,
@@ -971,43 +944,11 @@ class IGCR3SpinRestrictedParameterization:
             n_diag_params_per_layer=self.diagonal_chart.n_params,
             diagonal_from_parameters=self._diagonal_from_native_parameters,
             parameters_from_diagonal=self._native_parameters_from_diagonal,
-            as_layered_ansatz=_as_layered_igcr3_spin_restricted_ansatz,
-            one_layer_ansatz_builder=self._one_layer_ansatz_from_core,
-            layered_ansatz_builder=self._layered_ansatz_from_core,
             right_depends_on_prefix=self._right_depends_on_prefix,
             project_final_reference_ov=self.right_orbital_chart_override is None,
             left_right_ov_transform_scale=self._left_right_ov_transform_scale,
         )
 
-    def _one_layer_ansatz_from_core(
-        self,
-        diagonal: IGCR3SpinRestrictedSpec,
-        left: np.ndarray,
-        right: np.ndarray,
-    ) -> IGCR3Ansatz:
-        generic = IGCRAnsatz(
-            order=3,
-            diagonals=(IGCRDiagonalCoefficients.from_igcr3_spec(diagonal),),
-            rotations=(left, right),
-            nocc=self.nocc,
-        )
-        return generic.to_igcr3_ansatz()
-
-    def _layered_ansatz_from_core(
-        self,
-        diagonals: tuple[IGCR3SpinRestrictedSpec, ...],
-        rotations: tuple[np.ndarray, ...],
-    ) -> IGCR3LayeredAnsatz:
-        generic = IGCRAnsatz(
-            order=3,
-            diagonals=tuple(
-                IGCRDiagonalCoefficients.from_igcr3_spec(diagonal)
-                for diagonal in diagonals
-            ),
-            rotations=rotations,
-            nocc=self.nocc,
-        )
-        return generic.to_igcr3_ansatz()
 
     @property
     def n_left_orbital_rotation_params(self):
@@ -1103,34 +1044,37 @@ class IGCR3SpinRestrictedParameterization:
     def _diagonal_from_native_parameters(
         self,
         params: np.ndarray,
-    ) -> IGCR3SpinRestrictedSpec:
+    ) -> IGCRDiagonalCoefficients:
         coeffs = self.diagonal_chart.coefficients_from_parameters(params)
-        return IGCR3SpinRestrictedSpec(
-            double_params=coeffs.double_params,
-            pair_values=coeffs.pair_values,
-            tau=coeffs.tau,
-            omega_values=coeffs.omega_values,
+        return IGCRDiagonalCoefficients.from_igcr3_spec(
+            IGCR3SpinRestrictedSpec(
+                double_params=coeffs.double_params,
+                pair_values=coeffs.pair_values,
+                tau=coeffs.tau,
+                omega_values=coeffs.omega_values,
+            )
         )
 
     def ansatz_from_parameters(self, params: np.ndarray) -> IGCR3Ansatz | IGCR3LayeredAnsatz:
-        return self._layered_core.ansatz_from_parameters(params)
+        return self._layered_core.ansatz_from_parameters(params).to_legacy()
 
     def _native_parameters_from_diagonal(
         self,
-        diagonal: IGCR3SpinRestrictedSpec,
+        diagonal: IGCRDiagonalCoefficients,
     ) -> tuple[np.ndarray, np.ndarray]:
+        spec = diagonal.to_igcr3_spec()
         return self.diagonal_chart.parameters_from_coefficients(
             RestrictedCubicCoefficients(
-                double_params=diagonal.full_double(),
-                pair_values=np.asarray(diagonal.pair_values, dtype=np.float64),
-                tau=diagonal.tau_matrix(),
-                omega_values=diagonal.omega_vector(),
+                double_params=spec.full_double(),
+                pair_values=np.asarray(spec.pair_values, dtype=np.float64),
+                tau=spec.tau_matrix(),
+                omega_values=spec.omega_vector(),
             )
         )
 
     def parameters_from_ansatz(
         self,
-        ansatz: IGCR3Ansatz | IGCR3LayeredAnsatz,
+        ansatz: IGCRAnsatz | IGCR3Ansatz | IGCR3LayeredAnsatz,
     ) -> np.ndarray:
         return self._layered_core.parameters_from_ansatz(ansatz)
 
@@ -1512,6 +1456,7 @@ class IGCR4SpinRestrictedParameterization:
     @property
     def _layered_core(self) -> SpinRestrictedLayeredDiagonalParameterizationCore:
         return SpinRestrictedLayeredDiagonalParameterizationCore(
+            order=4,
             norb=self.norb,
             nocc=self.nocc,
             layers=self.layers,
@@ -1522,43 +1467,11 @@ class IGCR4SpinRestrictedParameterization:
             n_diag_params_per_layer=self.diagonal_chart.n_params,
             diagonal_from_parameters=self._diagonal_from_native_parameters,
             parameters_from_diagonal=self._native_parameters_from_diagonal,
-            as_layered_ansatz=_as_layered_igcr4_spin_restricted_ansatz,
-            one_layer_ansatz_builder=self._one_layer_ansatz_from_core,
-            layered_ansatz_builder=self._layered_ansatz_from_core,
             right_depends_on_prefix=self._right_depends_on_prefix,
             project_final_reference_ov=self.right_orbital_chart_override is None,
             left_right_ov_transform_scale=self._left_right_ov_transform_scale,
         )
 
-    def _one_layer_ansatz_from_core(
-        self,
-        diagonal: IGCR4SpinRestrictedSpec,
-        left: np.ndarray,
-        right: np.ndarray,
-    ) -> IGCR4Ansatz:
-        generic = IGCRAnsatz(
-            order=4,
-            diagonals=(IGCRDiagonalCoefficients.from_igcr4_spec(diagonal),),
-            rotations=(left, right),
-            nocc=self.nocc,
-        )
-        return generic.to_igcr4_ansatz()
-
-    def _layered_ansatz_from_core(
-        self,
-        diagonals: tuple[IGCR4SpinRestrictedSpec, ...],
-        rotations: tuple[np.ndarray, ...],
-    ) -> IGCR4LayeredAnsatz:
-        generic = IGCRAnsatz(
-            order=4,
-            diagonals=tuple(
-                IGCRDiagonalCoefficients.from_igcr4_spec(diagonal)
-                for diagonal in diagonals
-            ),
-            rotations=rotations,
-            nocc=self.nocc,
-        )
-        return generic.to_igcr4_ansatz()
 
     @property
     def n_left_orbital_rotation_params(self):
@@ -1679,40 +1592,43 @@ class IGCR4SpinRestrictedParameterization:
     def _diagonal_from_native_parameters(
         self,
         params: np.ndarray,
-    ) -> IGCR4SpinRestrictedSpec:
+    ) -> IGCRDiagonalCoefficients:
         coeffs = self.diagonal_chart.coefficients_from_parameters(params)
-        return IGCR4SpinRestrictedSpec(
-            double_params=coeffs.double_params,
-            pair_values=coeffs.pair_values,
-            tau=coeffs.tau,
-            omega_values=coeffs.omega_values,
-            eta_values=coeffs.eta_values,
-            rho_values=coeffs.rho_values,
-            sigma_values=coeffs.sigma_values,
+        return IGCRDiagonalCoefficients.from_igcr4_spec(
+            IGCR4SpinRestrictedSpec(
+                double_params=coeffs.double_params,
+                pair_values=coeffs.pair_values,
+                tau=coeffs.tau,
+                omega_values=coeffs.omega_values,
+                eta_values=coeffs.eta_values,
+                rho_values=coeffs.rho_values,
+                sigma_values=coeffs.sigma_values,
+            )
         )
 
     def ansatz_from_parameters(self, params: np.ndarray) -> IGCR4Ansatz | IGCR4LayeredAnsatz:
-        return self._layered_core.ansatz_from_parameters(params)
+        return self._layered_core.ansatz_from_parameters(params).to_legacy()
 
     def _native_parameters_from_diagonal(
         self,
-        diagonal: IGCR4SpinRestrictedSpec,
+        diagonal: IGCRDiagonalCoefficients,
     ) -> tuple[np.ndarray, np.ndarray]:
+        spec = diagonal.to_igcr4_spec()
         return self.diagonal_chart.parameters_from_coefficients(
             RestrictedQuarticCoefficients(
-                double_params=diagonal.full_double(),
-                pair_values=np.asarray(diagonal.pair_values, dtype=np.float64),
-                tau=diagonal.tau_matrix(),
-                omega_values=diagonal.omega_vector(),
-                eta_values=diagonal.eta_vector(),
-                rho_values=diagonal.rho_vector(),
-                sigma_values=diagonal.sigma_vector(),
+                double_params=spec.full_double(),
+                pair_values=np.asarray(spec.pair_values, dtype=np.float64),
+                tau=spec.tau_matrix(),
+                omega_values=spec.omega_vector(),
+                eta_values=spec.eta_vector(),
+                rho_values=spec.rho_vector(),
+                sigma_values=spec.sigma_vector(),
             )
         )
 
     def parameters_from_ansatz(
         self,
-        ansatz: IGCR4Ansatz | IGCR4LayeredAnsatz,
+        ansatz: IGCRAnsatz | IGCR4Ansatz | IGCR4LayeredAnsatz,
     ) -> np.ndarray:
         return self._layered_core.parameters_from_ansatz(ansatz)
 
