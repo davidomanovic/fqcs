@@ -251,6 +251,28 @@ def test_igcr2_pack_unpack_uses_named_blocks_for_layered_cases():
         assert parameterization.ansatz_from_parameters(roundtrip).norb == 4
 
 
+def test_igcr2_shared_diagonal_layered_roundtrip_preserves_state():
+    parameterization = IGCR2SpinRestrictedParameterization(
+        norb=4,
+        nocc=2,
+        layers=2,
+        shared_diagonal=True,
+    )
+    reference = hartree_fock_state(4, (2, 2))
+    params = np.linspace(-1.0e-3, 2.0e-3, parameterization.n_params)
+
+    ansatz = parameterization.ansatz_from_parameters(params)
+    roundtrip = parameterization.parameters_from_ansatz(ansatz)
+    actual = parameterization.ansatz_from_parameters(roundtrip).apply(
+        reference,
+        nelec=(2, 2),
+        copy=True,
+    )
+    expected = ansatz.apply(reference, nelec=(2, 2), copy=True)
+
+    _assert_allclose_up_to_phase(actual, expected, atol=1.0e-12)
+
+
 def test_gate_sequence_can_reproduce_one_layer_igcr2_ansatz():
     legacy = IGCR2SpinRestrictedParameterization(norb=4, nocc=2)
 

@@ -615,16 +615,65 @@ class IGCR2SpinRestrictedParameterization:
         return self.middle_orbital_chart
 
     @property
+    def _right_depends_on_prefix(self) -> bool:
+        return False
+
+    @property
+    def _layered_core(self) -> SpinRestrictedLayeredDiagonalParameterizationCore:
+        return SpinRestrictedLayeredDiagonalParameterizationCore(
+            norb=self.norb,
+            nocc=self.nocc,
+            layers=self.layers,
+            shared_diagonal=self.shared_diagonal,
+            left_orbital_chart=self._left_orbital_chart,
+            middle_orbital_chart=self._middle_orbital_chart,
+            right_orbital_chart=self.right_orbital_chart,
+            n_diag_params_per_layer=self.diagonal_chart.n_params,
+            diagonal_from_parameters=self._diagonal_from_native_parameters,
+            parameters_from_diagonal=self._native_parameters_from_diagonal,
+            as_layered_ansatz=_as_layered_igcr2_spin_restricted_ansatz,
+            one_layer_ansatz_builder=self._one_layer_ansatz_from_core,
+            layered_ansatz_builder=self._layered_ansatz_from_core,
+            right_depends_on_prefix=self._right_depends_on_prefix,
+            project_final_reference_ov=False,
+            left_right_ov_transform_scale=self._left_right_ov_transform_scale,
+        )
+
+    def _one_layer_ansatz_from_core(
+        self,
+        diagonal: IGCR2SpinRestrictedSpec,
+        left: np.ndarray,
+        right: np.ndarray,
+    ) -> IGCR2Ansatz:
+        return IGCR2Ansatz(
+            diagonal=diagonal,
+            left=left,
+            right=right,
+            nocc=self.nocc,
+        )
+
+    def _layered_ansatz_from_core(
+        self,
+        diagonals: tuple[IGCR2SpinRestrictedSpec, ...],
+        rotations: tuple[np.ndarray, ...],
+    ) -> IGCR2LayeredAnsatz:
+        return IGCR2LayeredAnsatz(
+            diagonals=diagonals,
+            rotations=rotations,
+            nocc=self.nocc,
+        )
+
+    @property
     def n_left_orbital_rotation_params(self):
-        return self._left_orbital_chart.n_params(self.norb)
+        return self._layered_core.n_left_orbital_rotation_params
 
     @property
     def n_middle_orbital_rotation_params_per_layer(self):
-        return self._middle_orbital_chart.n_params(self.norb)
+        return self._layered_core.n_middle_orbital_rotation_params_per_layer
 
     @property
     def n_middle_orbital_rotation_params(self):
-        return max(0, self.layers - 1) * self.n_middle_orbital_rotation_params_per_layer
+        return self._layered_core.n_middle_orbital_rotation_params
 
     @property
     def n_double_params(self):
@@ -642,23 +691,19 @@ class IGCR2SpinRestrictedParameterization:
 
     @property
     def n_diag_params_per_layer(self):
-        return self.n_pair_params_per_layer
+        return self._layered_core.n_diag_params_per_layer
 
     @property
     def n_right_orbital_rotation_params(self):
-        return self.right_orbital_chart.n_params(self.norb)
+        return self._layered_core.n_right_orbital_rotation_params
 
     @property
     def _right_orbital_rotation_start(self):
-        return (
-            self.n_left_orbital_rotation_params
-            + self.n_pair_params
-            + self.n_middle_orbital_rotation_params
-        )
+        return self._layered_core._right_orbital_rotation_start
 
     @property
     def _middle_orbital_rotation_start(self):
-        return self.n_left_orbital_rotation_params + self.n_pair_params
+        return self._layered_core._middle_orbital_rotation_start
 
     @property
     def _left_right_ov_transform_scale(self):
@@ -668,151 +713,35 @@ class IGCR2SpinRestrictedParameterization:
         )
 
     def _native_parameters_from_public(self, params: np.ndarray) -> np.ndarray:
-        return _left_right_ov_adapted_to_native(
-            params,
-            self.norb,
-            self.nocc,
-            self._right_orbital_rotation_start,
-            self._left_right_ov_transform_scale,
-        )
+        return self._layered_core.native_parameters_from_public(params)
 
     def _public_parameters_from_native(self, params: np.ndarray) -> np.ndarray:
-        return _native_to_left_right_ov_adapted(
-            params,
-            self.norb,
-            self.nocc,
-            self._right_orbital_rotation_start,
-            self._left_right_ov_transform_scale,
-        )
+        return self._layered_core.public_parameters_from_native(params)
 
     @property
     def n_params(self):
-        return (
-            self.n_left_orbital_rotation_params
-            + self.n_pair_params
-            + self.n_middle_orbital_rotation_params
-            + self.n_right_orbital_rotation_params
+        return self._layered_core.n_params
+
+    def _diagonal_from_native_parameters(
+        self,
+        params: np.ndarray,
+    ) -> IGCR2SpinRestrictedSpec:
+        coeffs = self.diagonal_chart.coefficients_from_parameters(params)
+        return IGCR2SpinRestrictedSpec(pair=coeffs.pair)
+
+    def _native_parameters_from_diagonal(
+        self,
+        diagonal: IGCR2SpinRestrictedSpec,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        return self.diagonal_chart.parameters_from_coefficients(
+            RestrictedPairCoefficients(pair=np.asarray(diagonal.pair, dtype=np.float64))
         )
 
     def ansatz_from_parameters(self, params: np.ndarray):
-        params = np.asarray(params, dtype=np.float64)
-        if params.shape != (self.n_params,):
-            raise ValueError(f"Expected {(self.n_params,)}, got {params.shape}.")
-        params = self._native_parameters_from_public(params)
-        view = parameter_view(self, params)
-        left = self._left_orbital_chart.unitary_from_parameters(
-            view.flat("left"), self.norb
-        )
-        n_pair = self.n_pair_params_per_layer
-        if self.shared_diagonal:
-            pair = self.diagonal_chart.coefficients_from_parameters(
-                view.flat("pair")
-            ).pair
-            pairs = [pair.copy() for _ in range(self.layers)]
-        else:
-            pair_values_by_layer = view.flat("pair").reshape(self.layers, n_pair)
-            pairs = [
-                self.diagonal_chart.coefficients_from_parameters(pair_values).pair
-                for pair_values in pair_values_by_layer
-            ]
-        middle_rotations = []
-        n_middle = self.n_middle_orbital_rotation_params_per_layer
-        middle_values = (
-            view.flat("middle").reshape(self.layers - 1, n_middle)
-            if self.layers > 1
-            else np.zeros((0, n_middle), dtype=np.float64)
-        )
-        for middle_params in middle_values:
-            middle_rotations.append(
-                self._middle_orbital_chart.unitary_from_parameters(
-                    middle_params, self.norb
-                )
-            )
-        final = self.right_orbital_chart.unitary_from_parameters(
-            view.flat("right"), self.norb
-        )
-        right = final
-        if self.layers == 1:
-            return IGCR2Ansatz(
-                diagonal=IGCR2SpinRestrictedSpec(pair=pairs[0]),
-                left=left,
-                right=right,
-                nocc=self.nocc,
-            )
-        return IGCR2LayeredAnsatz(
-            diagonals=tuple(IGCR2SpinRestrictedSpec(pair=pair) for pair in pairs),
-            rotations=tuple([left, *middle_rotations, right]),
-            nocc=self.nocc,
-        )
+        return self._layered_core.ansatz_from_parameters(params)
 
     def parameters_from_ansatz(self, ansatz: IGCR2Ansatz | IGCR2LayeredAnsatz):
-        if ansatz.norb != self.norb:
-            raise ValueError("ansatz norb does not match parameterization")
-        layered = _as_layered_igcr2_spin_restricted_ansatz(ansatz, self.layers)
-        if layered.nocc != self.nocc:
-            raise ValueError("ansatz nocc does not match parameterization")
-
-        rotations = [np.asarray(u, dtype=np.complex128) for u in layered.rotations]
-        rotation_params = []
-        for idx in range(self.layers):
-            chart = self._left_orbital_chart if idx == 0 else self._middle_orbital_chart
-            if idx == 0:
-                expected_n_params = self.n_left_orbital_rotation_params
-            else:
-                expected_n_params = self.n_middle_orbital_rotation_params_per_layer
-            if hasattr(chart, "parameters_and_right_phase_from_unitary"):
-                params_i, right_phase = chart.parameters_and_right_phase_from_unitary(
-                    rotations[idx]
-                )
-            else:
-                params_i = chart.parameters_from_unitary(rotations[idx])
-                right_phase = np.zeros(self.norb, dtype=np.float64)
-            if params_i.shape != (expected_n_params,):
-                raise ValueError(
-                    "orbital chart returned the wrong number of parameters; "
-                    f"expected {(expected_n_params,)}, got {params_i.shape}"
-                )
-            rotation_params.append(np.asarray(params_i, dtype=np.float64))
-            rotations[idx + 1] = _diag_unitary(right_phase) @ rotations[idx + 1]
-
-        pair_mats = [
-            np.asarray(diagonal.pair, dtype=np.float64)
-            for diagonal in layered.diagonals
-        ]
-        out = np.zeros(self.n_params, dtype=np.float64)
-        view = parameter_view(self, out)
-        view.set("left", rotation_params[0])
-        n_pair = self.n_pair_params_per_layer
-        if self.shared_diagonal:
-            pair_eff = np.mean(np.stack(pair_mats, axis=0), axis=0)
-            pair_params, _ = self.diagonal_chart.parameters_from_coefficients(
-                RestrictedPairCoefficients(pair=pair_eff)
-            )
-            view.set("pair", pair_params)
-        else:
-            pair_values = []
-            for pair_eff in pair_mats:
-                pair_params, _ = self.diagonal_chart.parameters_from_coefficients(
-                    RestrictedPairCoefficients(pair=pair_eff)
-                )
-                pair_values.append(pair_params)
-            pair_values = np.asarray(pair_values, dtype=np.float64)
-            view.set("pair", pair_values.reshape(view.block("pair").shape))
-
-        n_middle = self.n_middle_orbital_rotation_params_per_layer
-        if self.layers > 1:
-            view.set(
-                "middle",
-                np.asarray(rotation_params[1:], dtype=np.float64).reshape(
-                    self.layers - 1, n_middle
-                ),
-            )
-
-        view.set(
-            "right",
-            self.right_orbital_chart.parameters_from_unitary(rotations[-1]),
-        )
-        return self._public_parameters_from_native(out)
+        return self._layered_core.parameters_from_ansatz(ansatz)
 
     def parameters_from_t_amplitudes(
         self,
