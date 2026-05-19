@@ -24,10 +24,24 @@ def igcr4_parameters_from_t_amplitudes(*args, **kwargs):
 
     return impl(*args, **kwargs)
 
+
+def embed_ansatz_parameters(*args, **kwargs):
+    from xquces.seeds.dispatch import embed_ansatz_parameters as impl
+
+    return impl(*args, **kwargs)
+
+
+def parameters_from_t2(*args, **kwargs):
+    from xquces.seeds.dispatch import parameters_from_t2 as impl
+
+    return impl(*args, **kwargs)
+
 __all__ = [
     "CCSDResidualSeedInfo",
+    "embed_ansatz_parameters",
     "igcr3_parameters_from_t_amplitudes",
     "igcr4_parameters_from_t_amplitudes",
     "layered_igcr2_from_ccsd_t_amplitudes",
     "layered_igcr2_from_ucj_t_amplitudes",
+    "parameters_from_t2",
 ]

@@ -79,20 +79,7 @@ from xquces.gcr.utils import (
     orbital_transport_unitary_from_overlap,
 )
 from xquces.orbitals import apply_orbital_rotation
-from xquces.seeds.residual import (
-    CCSDResidualSeedInfo,
-    _as_restricted_t1,
-    _as_restricted_t2,
-    _block_column_indices,
-    _ccsd_target_state_from_t_amplitudes,
-    _default_high_order_residual_blocks,
-    _parameters_from_ccsd_residual_seed,
-    _phase_align_target,
-    _real_stacked,
-    _solve_real_tikhonov,
-    _state_overlap,
-    _state_residual_match_parameters,
-)
+from xquces.seeds.residual import CCSDResidualSeedInfo
 from xquces.ucj.init import (
     CCSDDoubleFactorization,
     UCJBalancedDFSeed,
@@ -3824,7 +3811,9 @@ class IGCRVariationalCircuit:
         active_only: bool = False,
         **kwargs,
     ) -> np.ndarray:
-        params = parameters_from_t2(
+        from xquces.seeds.dispatch import parameters_from_t2 as dispatch_parameters_from_t2
+
+        params = dispatch_parameters_from_t2(
             self.parameterization,
             t2,
             source_order=source_order,
@@ -3874,22 +3863,9 @@ def random_parameters(
 
 
 def embed_ansatz_parameters(parameterization: object, ansatz: object) -> np.ndarray:
-    if isinstance(ansatz, (IGCR4Ansatz, IGCR4LayeredAnsatz)) and hasattr(
-        parameterization, "parameters_from_ansatz"
-    ):
-        try:
-            return parameterization.parameters_from_ansatz(ansatz)
-        except TypeError:
-            pass
-    if isinstance(ansatz, (IGCR3Ansatz, IGCR3LayeredAnsatz)):
-        if hasattr(parameterization, "parameters_from_igcr3_ansatz"):
-            return parameterization.parameters_from_igcr3_ansatz(ansatz)
-        return parameterization.parameters_from_ansatz(ansatz)
-    if isinstance(ansatz, (IGCR2Ansatz, IGCR2LayeredAnsatz)):
-        if hasattr(parameterization, "parameters_from_igcr2_ansatz"):
-            return parameterization.parameters_from_igcr2_ansatz(ansatz)
-        return parameterization.parameters_from_ansatz(ansatz)
-    return parameterization.parameters_from_ansatz(ansatz)
+    from xquces.seeds.dispatch import embed_ansatz_parameters as dispatch_embed_ansatz_parameters
+
+    return dispatch_embed_ansatz_parameters(parameterization, ansatz)
 
 
 def parameters_from_t2(
@@ -3899,35 +3875,14 @@ def parameters_from_t2(
     source_order: int | None = None,
     **kwargs,
 ) -> np.ndarray:
-    order = int(source_order or getattr(parameterization, "order", 0) or 0)
-    if order == 0:
-        if isinstance(parameterization, IGCR4SpinRestrictedParameterization):
-            order = 4
-        elif isinstance(parameterization, IGCR3SpinRestrictedParameterization):
-            order = 3
-        else:
-            order = 2
-    if order == 2:
-        target = getattr(parameterization, "implementation", parameterization)
-        if isinstance(target, IGCR2SpinRestrictedParameterization):
-            t1 = kwargs.pop("t1", None)
-            return target.parameters_from_t_amplitudes(t2, t1=t1, **kwargs)
-        ansatz = IGCR2Ansatz.from_t_restricted(t2, **kwargs)
-    elif order == 3:
-        target = getattr(parameterization, "implementation", parameterization)
-        if isinstance(target, IGCR3SpinRestrictedParameterization):
-            t1 = kwargs.pop("t1", None)
-            return target.parameters_from_t_amplitudes(t2, t1=t1, **kwargs)
-        ansatz = IGCR3Ansatz.from_t_restricted(t2, **kwargs)
-    elif order == 4:
-        target = getattr(parameterization, "implementation", parameterization)
-        if isinstance(target, IGCR4SpinRestrictedParameterization):
-            t1 = kwargs.pop("t1", None)
-            return target.parameters_from_t_amplitudes(t2, t1=t1, **kwargs)
-        ansatz = IGCR4Ansatz.from_t_restricted(t2, **kwargs)
-    else:
-        raise ValueError("source_order must be 2, 3, or 4")
-    return embed_ansatz_parameters(parameterization, ansatz)
+    from xquces.seeds.dispatch import parameters_from_t2 as dispatch_parameters_from_t2
+
+    return dispatch_parameters_from_t2(
+        parameterization,
+        t2,
+        source_order=source_order,
+        **kwargs,
+    )
 
 
 _AUTO_RIGHT_CHART = "auto"
@@ -4100,7 +4055,9 @@ class IGCRSpinRestrictedParameterization:
         source_order: int | None = None,
         **kwargs,
     ) -> np.ndarray:
-        return parameters_from_t2(
+        from xquces.seeds.dispatch import parameters_from_t2 as dispatch_parameters_from_t2
+
+        return dispatch_parameters_from_t2(
             self.implementation,
             t2,
             source_order=source_order,
