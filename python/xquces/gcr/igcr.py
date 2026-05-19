@@ -58,6 +58,12 @@ from xquces.gcr.restricted_model import (
     spin_restricted_quartic_seed_from_pair_params,
     spin_restricted_triples_seed_from_pair_params,
 )
+from xquces.gcr.canonical import IGCRAnsatz, IGCRDiagonalCoefficients
+from xquces.gcr.canonical_layering import as_legacy_layered_igcr_ansatz
+from xquces.gcr.canonical_transform import (
+    relabel_legacy_igcr_ansatz_orbitals,
+    transport_legacy_igcr_ansatz_orbitals,
+)
 from xquces.gcr.utils import (
     _assert_square_matrix,
     _balanced_irreducible_pair_matrices,
@@ -152,27 +158,11 @@ def relabel_igcr2_ansatz_orbitals(
     old_for_new: np.ndarray,
     phases: np.ndarray | None = None,
 ) -> IGCR2Ansatz | IGCR2LayeredAnsatz:
-    if ansatz.norb != len(old_for_new):
-        raise ValueError("orbital permutation length must match ansatz.norb")
-    relabel = _orbital_relabeling_unitary(old_for_new, phases)
-    old_for_new = np.asarray(old_for_new, dtype=np.int64)
-    if isinstance(ansatz, IGCR2LayeredAnsatz):
-        diagonals = tuple(
-            _relabel_igcr2_diagonal(diagonal, old_for_new)
-            for diagonal in ansatz.diagonals
-        )
-        rotations = tuple(relabel.conj().T @ rot @ relabel for rot in ansatz.rotations)
-        return IGCR2LayeredAnsatz(
-            diagonals=diagonals,
-            rotations=rotations,
-            nocc=ansatz.nocc,
-        )
-    diagonal = _relabel_igcr2_diagonal(ansatz.diagonal, old_for_new)
-    return IGCR2Ansatz(
-        diagonal=diagonal,
-        left=relabel.conj().T @ ansatz.left @ relabel,
-        right=relabel.conj().T @ ansatz.right @ relabel,
-        nocc=ansatz.nocc,
+    return relabel_legacy_igcr_ansatz_orbitals(
+        ansatz,
+        old_for_new,
+        phases,
+        order=2,
     )
 
 
@@ -194,31 +184,10 @@ def _relabel_igcr2_diagonal(
 def transport_igcr2_ansatz_orbitals(
     ansatz: IGCR2Ansatz | IGCR2LayeredAnsatz, basis_change: np.ndarray
 ) -> IGCR2Ansatz | IGCR2LayeredAnsatz:
-    basis_change = np.asarray(basis_change, dtype=np.complex128)
-    if basis_change.shape != (ansatz.norb, ansatz.norb):
-        raise ValueError(
-            f"basis_change must have shape {(ansatz.norb, ansatz.norb)}, "
-            f"got {basis_change.shape}."
-        )
-    if not np.allclose(
-        basis_change.conj().T @ basis_change,
-        np.eye(ansatz.norb),
-        atol=1e-10,
-    ):
-        raise ValueError("basis_change must be unitary")
-    if isinstance(ansatz, IGCR2LayeredAnsatz):
-        rotations = list(ansatz.rotations)
-        rotations[0] = basis_change.conj().T @ rotations[0]
-        return IGCR2LayeredAnsatz(
-            diagonals=ansatz.diagonals,
-            rotations=tuple(rotations),
-            nocc=ansatz.nocc,
-        )
-    return IGCR2Ansatz(
-        diagonal=ansatz.diagonal,
-        left=basis_change.conj().T @ np.asarray(ansatz.left, dtype=np.complex128),
-        right=np.asarray(ansatz.right, dtype=np.complex128),
-        nocc=ansatz.nocc,
+    return transport_legacy_igcr_ansatz_orbitals(
+        ansatz,
+        basis_change,
+        order=2,
     )
 
 
@@ -230,45 +199,9 @@ def _as_layered_igcr2_spin_restricted_ansatz(
     ansatz: IGCR2Ansatz | IGCR2LayeredAnsatz,
     layers: int,
 ) -> IGCR2LayeredAnsatz:
-    if isinstance(ansatz, IGCR2LayeredAnsatz):
-        if not ansatz.is_spin_restricted:
-            raise TypeError("expected a spin-restricted ansatz")
-        if ansatz.layers == layers:
-            return ansatz
-        if ansatz.layers > layers:
-            raise ValueError(
-                "cannot exactly embed an IGCR2 ansatz with more layers than the "
-                "target parameterization"
-            )
-        identity = np.eye(ansatz.norb, dtype=np.complex128)
-        diagonals = list(ansatz.diagonals)
-        rotations = list(ansatz.rotations)
-        for _ in range(layers - ansatz.layers):
-            diagonals.append(_zero_igcr2_spin_restricted_spec(ansatz.norb))
-            rotations.insert(-1, identity)
-        return IGCR2LayeredAnsatz(
-            diagonals=tuple(diagonals),
-            rotations=tuple(rotations),
-            nocc=ansatz.nocc,
-        )
-    if ansatz.norb <= 0:
-        raise ValueError("ansatz norb must be positive")
-    if not ansatz.is_spin_restricted:
+    if getattr(ansatz, "is_spin_restricted", True) is False:
         raise TypeError("expected a spin-restricted ansatz")
-    identity = np.eye(ansatz.norb, dtype=np.complex128)
-    if layers == 1:
-        diagonals = [ansatz.diagonal]
-    else:
-        pair = np.asarray(ansatz.diagonal.pair, dtype=np.float64) / float(layers)
-        diagonals = [
-            IGCR2SpinRestrictedSpec(pair=pair.copy()) for _ in range(layers)
-        ]
-    rotations = [ansatz.left, *[identity for _ in range(layers - 1)], ansatz.right]
-    return IGCR2LayeredAnsatz(
-        diagonals=tuple(diagonals),
-        rotations=tuple(rotations),
-        nocc=ansatz.nocc,
-    )
+    return as_legacy_layered_igcr_ansatz(ansatz, layers, order=2)
 
 
 def _igcr2_layered_spin_restricted_ansatz_from_ucj(
@@ -429,23 +362,29 @@ class IGCR2SpinRestrictedParameterization:
         left: np.ndarray,
         right: np.ndarray,
     ) -> IGCR2Ansatz:
-        return IGCR2Ansatz(
-            diagonal=diagonal,
-            left=left,
-            right=right,
+        generic = IGCRAnsatz(
+            order=2,
+            diagonals=(IGCRDiagonalCoefficients.from_igcr2_spec(diagonal),),
+            rotations=(left, right),
             nocc=self.nocc,
         )
+        return generic.to_igcr2_ansatz()
 
     def _layered_ansatz_from_core(
         self,
         diagonals: tuple[IGCR2SpinRestrictedSpec, ...],
         rotations: tuple[np.ndarray, ...],
     ) -> IGCR2LayeredAnsatz:
-        return IGCR2LayeredAnsatz(
-            diagonals=diagonals,
+        generic = IGCRAnsatz(
+            order=2,
+            diagonals=tuple(
+                IGCRDiagonalCoefficients.from_igcr2_spec(diagonal)
+                for diagonal in diagonals
+            ),
             rotations=rotations,
             nocc=self.nocc,
         )
+        return generic.to_igcr2_ansatz()
 
     @property
     def n_left_orbital_rotation_params(self):
@@ -905,42 +844,7 @@ def _as_layered_igcr3_spin_restricted_ansatz(
     ansatz: IGCR3Ansatz | IGCR3LayeredAnsatz,
     layers: int,
 ) -> IGCR3LayeredAnsatz:
-    if isinstance(ansatz, IGCR3LayeredAnsatz):
-        if ansatz.layers == layers:
-            return ansatz
-        if ansatz.layers > layers:
-            raise ValueError(
-                "cannot exactly embed an IGCR3 ansatz with more layers than the "
-                "target parameterization"
-            )
-        identity = np.eye(ansatz.norb, dtype=np.complex128)
-        diagonals = list(ansatz.diagonals)
-        rotations = list(ansatz.rotations)
-        for _ in range(layers - ansatz.layers):
-            diagonals.append(_zero_igcr3_spin_restricted_spec(ansatz.norb))
-            rotations.insert(-1, identity)
-        return IGCR3LayeredAnsatz(
-            diagonals=tuple(diagonals),
-            rotations=tuple(rotations),
-            nocc=ansatz.nocc,
-        )
-    if ansatz.norb <= 0:
-        raise ValueError("ansatz norb must be positive")
-    identity = np.eye(ansatz.norb, dtype=np.complex128)
-    if layers == 1:
-        diagonals = [ansatz.diagonal]
-    else:
-        scale = 1.0 / float(layers)
-        diagonals = [
-            _scale_igcr3_spin_restricted_spec(ansatz.diagonal, scale)
-            for _ in range(layers)
-        ]
-    rotations = [ansatz.left, *[identity for _ in range(layers - 1)], ansatz.right]
-    return IGCR3LayeredAnsatz(
-        diagonals=tuple(diagonals),
-        rotations=tuple(rotations),
-        nocc=ansatz.nocc,
-    )
+    return as_legacy_layered_igcr_ansatz(ansatz, layers, order=3)
 
 
 def _igcr3_ansatz_from_igcr2_any(
@@ -1028,56 +932,21 @@ def relabel_igcr3_ansatz_orbitals(
     old_for_new: np.ndarray,
     phases: np.ndarray | None = None,
 ) -> IGCR3Ansatz | IGCR3LayeredAnsatz:
-    if ansatz.norb != len(old_for_new):
-        raise ValueError("orbital permutation length must match ansatz.norb")
-    relabel = _orbital_relabeling_unitary(old_for_new, phases)
-    old_for_new = np.asarray(old_for_new, dtype=np.int64)
-    if isinstance(ansatz, IGCR3LayeredAnsatz):
-        return IGCR3LayeredAnsatz(
-            diagonals=tuple(
-                _relabel_igcr3_diagonal(diagonal, old_for_new)
-                for diagonal in ansatz.diagonals
-            ),
-            rotations=tuple(relabel.conj().T @ rot @ relabel for rot in ansatz.rotations),
-            nocc=ansatz.nocc,
-        )
-    diagonal = _relabel_igcr3_diagonal(ansatz.diagonal, old_for_new)
-    return IGCR3Ansatz(
-        diagonal=diagonal,
-        left=relabel.conj().T @ ansatz.left @ relabel,
-        right=relabel.conj().T @ ansatz.right @ relabel,
-        nocc=ansatz.nocc,
+    return relabel_legacy_igcr_ansatz_orbitals(
+        ansatz,
+        old_for_new,
+        phases,
+        order=3,
     )
 
 
 def transport_igcr3_ansatz_orbitals(
     ansatz: IGCR3Ansatz | IGCR3LayeredAnsatz, basis_change: np.ndarray
 ) -> IGCR3Ansatz | IGCR3LayeredAnsatz:
-    basis_change = np.asarray(basis_change, dtype=np.complex128)
-    if basis_change.shape != (ansatz.norb, ansatz.norb):
-        raise ValueError(
-            f"basis_change must have shape {(ansatz.norb, ansatz.norb)}, "
-            f"got {basis_change.shape}."
-        )
-    if not np.allclose(
-        basis_change.conj().T @ basis_change,
-        np.eye(ansatz.norb),
-        atol=1e-10,
-    ):
-        raise ValueError("basis_change must be unitary")
-    if isinstance(ansatz, IGCR3LayeredAnsatz):
-        rotations = list(ansatz.rotations)
-        rotations[0] = basis_change.conj().T @ rotations[0]
-        return IGCR3LayeredAnsatz(
-            diagonals=ansatz.diagonals,
-            rotations=tuple(rotations),
-            nocc=ansatz.nocc,
-        )
-    return IGCR3Ansatz(
-        diagonal=ansatz.diagonal,
-        left=basis_change.conj().T @ np.asarray(ansatz.left, dtype=np.complex128),
-        right=np.asarray(ansatz.right, dtype=np.complex128),
-        nocc=ansatz.nocc,
+    return transport_legacy_igcr_ansatz_orbitals(
+        ansatz,
+        basis_change,
+        order=3,
     )
 
 
@@ -1190,23 +1059,29 @@ class IGCR3SpinRestrictedParameterization:
         left: np.ndarray,
         right: np.ndarray,
     ) -> IGCR3Ansatz:
-        return IGCR3Ansatz(
-            diagonal=diagonal,
-            left=left,
-            right=right,
+        generic = IGCRAnsatz(
+            order=3,
+            diagonals=(IGCRDiagonalCoefficients.from_igcr3_spec(diagonal),),
+            rotations=(left, right),
             nocc=self.nocc,
         )
+        return generic.to_igcr3_ansatz()
 
     def _layered_ansatz_from_core(
         self,
         diagonals: tuple[IGCR3SpinRestrictedSpec, ...],
         rotations: tuple[np.ndarray, ...],
     ) -> IGCR3LayeredAnsatz:
-        return IGCR3LayeredAnsatz(
-            diagonals=diagonals,
+        generic = IGCRAnsatz(
+            order=3,
+            diagonals=tuple(
+                IGCRDiagonalCoefficients.from_igcr3_spec(diagonal)
+                for diagonal in diagonals
+            ),
             rotations=rotations,
             nocc=self.nocc,
         )
+        return generic.to_igcr3_ansatz()
 
     @property
     def n_left_orbital_rotation_params(self):
@@ -1530,42 +1405,7 @@ def _as_layered_igcr4_spin_restricted_ansatz(
     ansatz: IGCR4Ansatz | IGCR4LayeredAnsatz,
     layers: int,
 ) -> IGCR4LayeredAnsatz:
-    if isinstance(ansatz, IGCR4LayeredAnsatz):
-        if ansatz.layers == layers:
-            return ansatz
-        if ansatz.layers > layers:
-            raise ValueError(
-                "cannot exactly embed an IGCR4 ansatz with more layers than the "
-                "target parameterization"
-            )
-        identity = np.eye(ansatz.norb, dtype=np.complex128)
-        diagonals = list(ansatz.diagonals)
-        rotations = list(ansatz.rotations)
-        for _ in range(layers - ansatz.layers):
-            diagonals.append(_zero_igcr4_spin_restricted_spec(ansatz.norb))
-            rotations.insert(-1, identity)
-        return IGCR4LayeredAnsatz(
-            diagonals=tuple(diagonals),
-            rotations=tuple(rotations),
-            nocc=ansatz.nocc,
-        )
-    if ansatz.norb <= 0:
-        raise ValueError("ansatz norb must be positive")
-    identity = np.eye(ansatz.norb, dtype=np.complex128)
-    if layers == 1:
-        diagonals = [ansatz.diagonal]
-    else:
-        scale = 1.0 / float(layers)
-        diagonals = [
-            _scale_igcr4_spin_restricted_spec(ansatz.diagonal, scale)
-            for _ in range(layers)
-        ]
-    rotations = [ansatz.left, *[identity for _ in range(layers - 1)], ansatz.right]
-    return IGCR4LayeredAnsatz(
-        diagonals=tuple(diagonals),
-        rotations=tuple(rotations),
-        nocc=ansatz.nocc,
-    )
+    return as_legacy_layered_igcr_ansatz(ansatz, layers, order=4)
 
 
 def _igcr4_ansatz_from_igcr3_any(
@@ -1722,57 +1562,21 @@ def relabel_igcr4_ansatz_orbitals(
     old_for_new: np.ndarray,
     phases: np.ndarray | None = None,
 ) -> IGCR4Ansatz | IGCR4LayeredAnsatz:
-    if ansatz.norb != len(old_for_new):
-        raise ValueError("orbital permutation length must match ansatz.norb")
-    relabel = _orbital_relabeling_unitary(old_for_new, phases)
-    old_for_new = np.asarray(old_for_new, dtype=np.int64)
-    if isinstance(ansatz, IGCR4LayeredAnsatz):
-        return IGCR4LayeredAnsatz(
-            diagonals=tuple(
-                _relabel_igcr4_diagonal(diagonal, old_for_new)
-                for diagonal in ansatz.diagonals
-            ),
-            rotations=tuple(relabel.conj().T @ rot @ relabel for rot in ansatz.rotations),
-            nocc=ansatz.nocc,
-        )
-    diagonal = _relabel_igcr4_diagonal(ansatz.diagonal, old_for_new)
-
-    return IGCR4Ansatz(
-        diagonal=diagonal,
-        left=relabel.conj().T @ ansatz.left @ relabel,
-        right=relabel.conj().T @ ansatz.right @ relabel,
-        nocc=ansatz.nocc,
+    return relabel_legacy_igcr_ansatz_orbitals(
+        ansatz,
+        old_for_new,
+        phases,
+        order=4,
     )
 
 
 def transport_igcr4_ansatz_orbitals(
     ansatz: IGCR4Ansatz | IGCR4LayeredAnsatz, basis_change: np.ndarray
 ) -> IGCR4Ansatz | IGCR4LayeredAnsatz:
-    basis_change = np.asarray(basis_change, dtype=np.complex128)
-    if basis_change.shape != (ansatz.norb, ansatz.norb):
-        raise ValueError(
-            f"basis_change must have shape {(ansatz.norb, ansatz.norb)}, "
-            f"got {basis_change.shape}."
-        )
-    if not np.allclose(
-        basis_change.conj().T @ basis_change,
-        np.eye(ansatz.norb),
-        atol=1e-10,
-    ):
-        raise ValueError("basis_change must be unitary")
-    if isinstance(ansatz, IGCR4LayeredAnsatz):
-        rotations = list(ansatz.rotations)
-        rotations[0] = basis_change.conj().T @ rotations[0]
-        return IGCR4LayeredAnsatz(
-            diagonals=ansatz.diagonals,
-            rotations=tuple(rotations),
-            nocc=ansatz.nocc,
-        )
-    return IGCR4Ansatz(
-        diagonal=ansatz.diagonal,
-        left=basis_change.conj().T @ np.asarray(ansatz.left, dtype=np.complex128),
-        right=np.asarray(ansatz.right, dtype=np.complex128),
-        nocc=ansatz.nocc,
+    return transport_legacy_igcr_ansatz_orbitals(
+        ansatz,
+        basis_change,
+        order=4,
     )
 
 
@@ -1916,23 +1720,29 @@ class IGCR4SpinRestrictedParameterization:
         left: np.ndarray,
         right: np.ndarray,
     ) -> IGCR4Ansatz:
-        return IGCR4Ansatz(
-            diagonal=diagonal,
-            left=left,
-            right=right,
+        generic = IGCRAnsatz(
+            order=4,
+            diagonals=(IGCRDiagonalCoefficients.from_igcr4_spec(diagonal),),
+            rotations=(left, right),
             nocc=self.nocc,
         )
+        return generic.to_igcr4_ansatz()
 
     def _layered_ansatz_from_core(
         self,
         diagonals: tuple[IGCR4SpinRestrictedSpec, ...],
         rotations: tuple[np.ndarray, ...],
     ) -> IGCR4LayeredAnsatz:
-        return IGCR4LayeredAnsatz(
-            diagonals=diagonals,
+        generic = IGCRAnsatz(
+            order=4,
+            diagonals=tuple(
+                IGCRDiagonalCoefficients.from_igcr4_spec(diagonal)
+                for diagonal in diagonals
+            ),
             rotations=rotations,
             nocc=self.nocc,
         )
+        return generic.to_igcr4_ansatz()
 
     @property
     def n_left_orbital_rotation_params(self):

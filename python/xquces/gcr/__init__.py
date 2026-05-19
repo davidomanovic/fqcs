@@ -37,13 +37,10 @@ from xquces.gcr.igcr import (
     random_parameters,
 )
 from xquces.gcr.canonical import IGCRAnsatz, IGCRDiagonalCoefficients
-from xquces.gcr.canonical_install import install_igcr_parameterization_adapters
 from xquces.gcr.canonical_transform import (
     relabel_igcr_ansatz_orbitals,
     transport_igcr_ansatz_orbitals,
 )
-
-install_igcr_parameterization_adapters()
 
 from xquces.gcr.igcr import (
     relabel_igcr2_ansatz_orbitals,

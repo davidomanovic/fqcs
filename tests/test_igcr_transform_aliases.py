@@ -14,13 +14,13 @@ def test_top_level_generic_transform_aliases_are_published():
     assert xquces.transport_igcr_ansatz_orbitals is transport_igcr_ansatz_orbitals
 
 
-def test_top_level_legacy_transform_aliases_are_patched():
-    assert xquces.relabel_igcr2_ansatz_orbitals.__module__ == "xquces.gcr.canonical_install"
-    assert xquces.relabel_igcr3_ansatz_orbitals.__module__ == "xquces.gcr.canonical_install"
-    assert xquces.relabel_igcr4_ansatz_orbitals.__module__ == "xquces.gcr.canonical_install"
-    assert xquces.transport_igcr2_ansatz_orbitals.__module__ == "xquces.gcr.canonical_install"
-    assert xquces.transport_igcr3_ansatz_orbitals.__module__ == "xquces.gcr.canonical_install"
-    assert xquces.transport_igcr4_ansatz_orbitals.__module__ == "xquces.gcr.canonical_install"
+def test_top_level_legacy_transform_aliases_are_explicit_public_functions():
+    assert xquces.relabel_igcr2_ansatz_orbitals.__module__ == "xquces.gcr.igcr"
+    assert xquces.relabel_igcr3_ansatz_orbitals.__module__ == "xquces.gcr.igcr"
+    assert xquces.relabel_igcr4_ansatz_orbitals.__module__ == "xquces.gcr.igcr"
+    assert xquces.transport_igcr2_ansatz_orbitals.__module__ == "xquces.gcr.igcr"
+    assert xquces.transport_igcr3_ansatz_orbitals.__module__ == "xquces.gcr.igcr"
+    assert xquces.transport_igcr4_ansatz_orbitals.__module__ == "xquces.gcr.igcr"
 
 
 def test_spin_balanced_igcr2_relabel_and_transport_are_not_canonicalized():

@@ -34,10 +34,17 @@ from xquces.gcr.igcr import (
     relabel_igcr2_ansatz_orbitals,
     relabel_igcr3_ansatz_orbitals,
     relabel_igcr4_ansatz_orbitals,
+    transport_igcr2_ansatz_orbitals,
+    transport_igcr3_ansatz_orbitals,
+    transport_igcr4_ansatz_orbitals,
     spin_restricted_quartic_seed_from_pair_params,
     spin_restricted_triples_seed_from_pair_params,
 )
 from xquces.gcr.canonical import IGCRAnsatz, IGCRDiagonalCoefficients
+from xquces.gcr.canonical_transform import (
+    relabel_igcr_ansatz_orbitals,
+    transport_igcr_ansatz_orbitals,
+)
 from xquces.gates import (
     apply_gcr_spin_balanced,
     apply_gcr_spin_restricted,
@@ -202,6 +209,14 @@ __all__ = [
     "parameter_view",
     "parameters_from_t2",
     "random_parameters",
+    "relabel_igcr_ansatz_orbitals",
+    "relabel_igcr2_ansatz_orbitals",
+    "relabel_igcr3_ansatz_orbitals",
+    "relabel_igcr4_ansatz_orbitals",
+    "transport_igcr_ansatz_orbitals",
+    "transport_igcr2_ansatz_orbitals",
+    "transport_igcr3_ansatz_orbitals",
+    "transport_igcr4_ansatz_orbitals",
     "gradient_coordinate_subspace",
     "minimize_linear_method",
     "minimize_subspace_linear_method",

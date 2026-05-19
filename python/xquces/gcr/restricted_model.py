@@ -98,6 +98,27 @@ class IGCR2Ansatz:
             copy=copy,
         )
 
+    def to_generic(self):
+        if not self.is_spin_restricted:
+            raise TypeError("expected a spin-restricted ansatz")
+        from xquces.gcr.canonical import IGCRAnsatz
+
+        return IGCRAnsatz.from_legacy(self, order=2)
+
+    @classmethod
+    def from_generic(cls, ansatz):
+        from xquces.gcr.canonical import IGCRAnsatz
+
+        generic = ansatz if isinstance(ansatz, IGCRAnsatz) else IGCRAnsatz.from_legacy(ansatz)
+        if generic.order != 2:
+            generic = IGCRAnsatz(
+                order=2,
+                diagonals=generic.diagonals,
+                rotations=generic.rotations,
+                nocc=generic.nocc,
+            )
+        return generic.to_igcr2_ansatz()
+
     @classmethod
     def from_gcr_ansatz(cls, ansatz: GCRAnsatz, nocc: int):
         right_ov = exact_reference_ov_unitary(ansatz.right_orbital_rotation, nocc)
@@ -261,6 +282,27 @@ class IGCR2LayeredAnsatz:
                 copy=False,
             )
         return arr
+
+    def to_generic(self):
+        if not self.is_spin_restricted:
+            raise TypeError("expected a spin-restricted ansatz")
+        from xquces.gcr.canonical import IGCRAnsatz
+
+        return IGCRAnsatz.from_legacy(self, order=2)
+
+    @classmethod
+    def from_generic(cls, ansatz):
+        from xquces.gcr.canonical import IGCRAnsatz
+
+        generic = ansatz if isinstance(ansatz, IGCRAnsatz) else IGCRAnsatz.from_legacy(ansatz)
+        if generic.order != 2:
+            generic = IGCRAnsatz(
+                order=2,
+                diagonals=generic.diagonals,
+                rotations=generic.rotations,
+                nocc=generic.nocc,
+            )
+        return generic.to_igcr2_ansatz()
 
 
 def spin_restricted_triples_seed_from_pair_params(
@@ -474,6 +516,25 @@ class IGCR3Ansatz:
         )
         return arr
 
+    def to_generic(self):
+        from xquces.gcr.canonical import IGCRAnsatz
+
+        return IGCRAnsatz.from_legacy(self, order=3)
+
+    @classmethod
+    def from_generic(cls, ansatz):
+        from xquces.gcr.canonical import IGCRAnsatz
+
+        generic = ansatz if isinstance(ansatz, IGCRAnsatz) else IGCRAnsatz.from_legacy(ansatz)
+        if generic.order != 3:
+            generic = IGCRAnsatz(
+                order=3,
+                diagonals=generic.diagonals,
+                rotations=generic.rotations,
+                nocc=generic.nocc,
+            )
+        return generic.to_igcr3_ansatz()
+
     def to_igcr2_ansatz(self) -> IGCR2Ansatz:
         if np.linalg.norm(self.diagonal.tau_matrix()) > 1e-14:
             raise ValueError("cannot convert nonzero tau sector to iGCR-2")
@@ -629,6 +690,25 @@ class IGCR3LayeredAnsatz:
                 copy=False,
             )
         return arr
+
+    def to_generic(self):
+        from xquces.gcr.canonical import IGCRAnsatz
+
+        return IGCRAnsatz.from_legacy(self, order=3)
+
+    @classmethod
+    def from_generic(cls, ansatz):
+        from xquces.gcr.canonical import IGCRAnsatz
+
+        generic = ansatz if isinstance(ansatz, IGCRAnsatz) else IGCRAnsatz.from_legacy(ansatz)
+        if generic.order != 3:
+            generic = IGCRAnsatz(
+                order=3,
+                diagonals=generic.diagonals,
+                rotations=generic.rotations,
+                nocc=generic.nocc,
+            )
+        return generic.to_igcr3_ansatz()
 
 
 def spin_restricted_quartic_seed_from_pair_params(
@@ -905,6 +985,25 @@ class IGCR4Ansatz:
         )
         return arr
 
+    def to_generic(self):
+        from xquces.gcr.canonical import IGCRAnsatz
+
+        return IGCRAnsatz.from_legacy(self, order=4)
+
+    @classmethod
+    def from_generic(cls, ansatz):
+        from xquces.gcr.canonical import IGCRAnsatz
+
+        generic = ansatz if isinstance(ansatz, IGCRAnsatz) else IGCRAnsatz.from_legacy(ansatz)
+        if generic.order != 4:
+            generic = IGCRAnsatz(
+                order=4,
+                diagonals=generic.diagonals,
+                rotations=generic.rotations,
+                nocc=generic.nocc,
+            )
+        return generic.to_igcr4_ansatz()
+
     def to_igcr3_ansatz(self) -> IGCR3Ansatz:
         if np.linalg.norm(self.diagonal.eta_vector()) > 1e-14:
             raise ValueError("cannot convert nonzero eta sector to iGCR-3")
@@ -1116,6 +1215,25 @@ class IGCR4LayeredAnsatz:
                 copy=False,
             )
         return arr
+
+    def to_generic(self):
+        from xquces.gcr.canonical import IGCRAnsatz
+
+        return IGCRAnsatz.from_legacy(self, order=4)
+
+    @classmethod
+    def from_generic(cls, ansatz):
+        from xquces.gcr.canonical import IGCRAnsatz
+
+        generic = ansatz if isinstance(ansatz, IGCRAnsatz) else IGCRAnsatz.from_legacy(ansatz)
+        if generic.order != 4:
+            generic = IGCRAnsatz(
+                order=4,
+                diagonals=generic.diagonals,
+                rotations=generic.rotations,
+                nocc=generic.nocc,
+            )
+        return generic.to_igcr4_ansatz()
 
 
 __all__ = [

@@ -483,41 +483,14 @@ class IGCRAnsatz:
 
 
 def install_igcr_legacy_adapters() -> None:
-    """Attach minimal generic-model adapters to the legacy public classes.
+    """Deprecated compatibility no-op.
 
-    This keeps the compatibility surface alive while allowing new code to move
-    toward ``IGCRAnsatz`` without immediately rewriting every caller.
+    Legacy iGCR ansatz classes now define ``to_generic`` and
+    ``from_generic`` directly.  This function is kept only so older imports do
+    not fail.
     """
 
-    from xquces.gcr import restricted_model as rm
-
-    def _to_generic(self):
-        return IGCRAnsatz.from_legacy(self)
-
-    adapters = (
-        (rm.IGCR2Ansatz, 2),
-        (rm.IGCR2LayeredAnsatz, 2),
-        (rm.IGCR3Ansatz, 3),
-        (rm.IGCR3LayeredAnsatz, 3),
-        (rm.IGCR4Ansatz, 4),
-        (rm.IGCR4LayeredAnsatz, 4),
-    )
-    for legacy_cls, order in adapters:
-        legacy_cls.to_generic = _to_generic
-
-        @classmethod
-        def _from_generic(cls, ansatz, _order=order):
-            generic = ansatz if isinstance(ansatz, IGCRAnsatz) else IGCRAnsatz.from_legacy(ansatz)
-            if generic.order != _order:
-                generic = IGCRAnsatz(
-                    order=_order,
-                    diagonals=generic.diagonals,
-                    rotations=generic.rotations,
-                    nocc=generic.nocc,
-                )
-            return generic.to_legacy()
-
-        legacy_cls.from_generic = _from_generic
+    return None
 
 
 __all__ = [
