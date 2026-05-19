@@ -15,6 +15,7 @@ from xquces.gcr.igcr import (
     IGCR2SpinBalancedParameterization,
     IGCR2SpinRestrictedParameterization,
     layered_igcr2_from_ccsd_t_amplitudes,
+    layered_igcr2_from_ucj_t_amplitudes,
 )
 from xquces.gcr.charts import GCR2FullUnitaryChart
 from xquces.gcr.utils import exact_reference_ov_unitary
@@ -26,6 +27,10 @@ from xquces.ucj.init import CCSDDoubleFactorization, factorize_ccsd_t_amplitudes
 from xquces.ucj.model import SpinRestrictedSpec, UCJAnsatz, UCJLayer
 from xquces.ucj.parameterization import ov_final_unitary
 from xquces.states import hartree_fock_state
+from xquces.seeds.ucj import (
+    layered_igcr2_from_ccsd_t_amplitudes as seed_layered_igcr2_from_ccsd_t_amplitudes,
+    layered_igcr2_from_ucj_t_amplitudes as seed_layered_igcr2_from_ucj_t_amplitudes,
+)
 
 
 def _small_t2(nocc: int = 2, nvirt: int = 3, seed: int = 0) -> np.ndarray:
@@ -72,6 +77,11 @@ def _random_spin_restricted_ucj(
         layers=tuple(ucj_layers),
         final_orbital_rotation=_random_unitary(norb, rng),
     )
+
+
+def _state_from_igcr2_ansatz(ansatz, norb: int, nocc: int) -> np.ndarray:
+    nelec = (nocc, nocc)
+    return ansatz.apply(hartree_fock_state(norb, nelec), nelec=nelec, copy=True)
 
 
 # ---------------------------------------------------------------------------
@@ -225,6 +235,99 @@ class TestLayeredIGCR2FromCCSD:
         result = layered_igcr2_from_ccsd_t_amplitudes(t2, t1=t1, layers=2)
         assert isinstance(result, IGCR2LayeredAnsatz)
         assert result.layers == 2
+
+    def test_ucj_lift_import_compatibility(self):
+        assert callable(layered_igcr2_from_ucj_t_amplitudes)
+        assert callable(layered_igcr2_from_ccsd_t_amplitudes)
+        assert callable(seed_layered_igcr2_from_ucj_t_amplitudes)
+        assert callable(seed_layered_igcr2_from_ccsd_t_amplitudes)
+
+    @pytest.mark.parametrize("layers", [1, 2])
+    def test_parameterization_ucj_seed_matches_moved_helper(self, layers):
+        nocc, nvirt = 2, 3
+        norb = nocc + nvirt
+        t2 = _small_t2(nocc, nvirt, seed=77)
+        t1 = _small_t1(nocc, nvirt, seed=78)
+        param = IGCR2SpinRestrictedParameterization(
+            norb=norb,
+            nocc=nocc,
+            layers=layers,
+        )
+
+        x_method = param.parameters_from_ucj_t_amplitudes(t2, t1=t1)
+        helper_ansatz = seed_layered_igcr2_from_ucj_t_amplitudes(
+            t2,
+            t1=t1,
+            layers=layers,
+            nocc=nocc,
+        )
+        x_helper = param.parameters_from_ansatz(helper_ansatz)
+
+        np.testing.assert_allclose(x_helper, x_method, atol=1.0e-12)
+        method_state = _state_from_igcr2_ansatz(
+            param.ansatz_from_parameters(x_method),
+            norb,
+            nocc,
+        )
+        helper_state = _state_from_igcr2_ansatz(
+            param.ansatz_from_parameters(x_helper),
+            norb,
+            nocc,
+        )
+        np.testing.assert_allclose(method_state, helper_state, atol=1.0e-12)
+
+    def test_layered_ucj_lift_wrapper_matches_seed_module_state(self):
+        nocc, nvirt = 2, 3
+        norb = nocc + nvirt
+        t2 = _small_t2(nocc, nvirt, seed=88)
+        t1 = _small_t1(nocc, nvirt, seed=89)
+
+        legacy = layered_igcr2_from_ucj_t_amplitudes(
+            t2,
+            t1=t1,
+            layers=2,
+            nocc=nocc,
+        )
+        moved = seed_layered_igcr2_from_ucj_t_amplitudes(
+            t2,
+            t1=t1,
+            layers=2,
+            nocc=nocc,
+        )
+
+        assert isinstance(legacy, IGCR2LayeredAnsatz)
+        assert isinstance(moved, IGCR2LayeredAnsatz)
+        np.testing.assert_allclose(
+            _state_from_igcr2_ansatz(legacy, norb, nocc),
+            _state_from_igcr2_ansatz(moved, norb, nocc),
+            atol=1.0e-12,
+        )
+
+    def test_ccsd_t_amplitude_alias_matches_ucj_lift_path(self):
+        nocc, nvirt = 2, 3
+        norb = nocc + nvirt
+        t2 = _small_t2(nocc, nvirt, seed=90)
+        t1 = _small_t1(nocc, nvirt, seed=91)
+
+        ccsd_alias = seed_layered_igcr2_from_ccsd_t_amplitudes(
+            t2,
+            t1=t1,
+            layers=2,
+            nocc=nocc,
+        )
+        ucj_lift = seed_layered_igcr2_from_ucj_t_amplitudes(
+            t2,
+            t1=t1,
+            layers=2,
+            nocc=nocc,
+        )
+
+        assert isinstance(ccsd_alias, IGCR2LayeredAnsatz)
+        np.testing.assert_allclose(
+            _state_from_igcr2_ansatz(ccsd_alias, norb, nocc),
+            _state_from_igcr2_ansatz(ucj_lift, norb, nocc),
+            atol=1.0e-12,
+        )
 
 
 # ---------------------------------------------------------------------------
