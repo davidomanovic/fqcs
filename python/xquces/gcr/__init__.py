@@ -38,9 +38,21 @@ from xquces.gcr.igcr import (
 )
 from xquces.gcr.canonical import IGCRAnsatz, IGCRDiagonalCoefficients
 from xquces.gcr.canonical_install import install_igcr_parameterization_adapters
+from xquces.gcr.canonical_transform import (
+    relabel_igcr_ansatz_orbitals,
+    transport_igcr_ansatz_orbitals,
+)
 
 install_igcr_parameterization_adapters()
 
+from xquces.gcr.igcr import (
+    relabel_igcr2_ansatz_orbitals,
+    relabel_igcr3_ansatz_orbitals,
+    relabel_igcr4_ansatz_orbitals,
+    transport_igcr2_ansatz_orbitals,
+    transport_igcr3_ansatz_orbitals,
+    transport_igcr4_ansatz_orbitals,
+)
 from xquces.gcr.model import GCRAnsatz, gcr_from_ucj_ansatz
 from xquces.gcr.pair_uccd_reference import (
     GCR2ProductPairUCCDParameterization,
@@ -123,6 +135,14 @@ __all__ = [
     "parameter_view",
     "parameters_from_t2",
     "random_parameters",
+    "relabel_igcr_ansatz_orbitals",
+    "relabel_igcr2_ansatz_orbitals",
+    "relabel_igcr3_ansatz_orbitals",
+    "relabel_igcr4_ansatz_orbitals",
+    "transport_igcr_ansatz_orbitals",
+    "transport_igcr2_ansatz_orbitals",
+    "transport_igcr3_ansatz_orbitals",
+    "transport_igcr4_ansatz_orbitals",
     "slater_pair_orbital_rotation_from_parameters",
     "slater_pair_uccd_pair_register_state",
     "slater_pair_uccd_state",
