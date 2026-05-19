@@ -8,12 +8,19 @@ import numpy as np
 import pyscf.lib
 
 from xquces.gcr.igcr import (
+    CCSDResidualSeedInfo as LegacyCCSDResidualSeedInfo,
     IGCR2SpinRestrictedParameterization,
     IGCR3SpinRestrictedParameterization,
     IGCR4SpinRestrictedParameterization,
     parameter_blocks,
 )
 from xquces.hamiltonians import MolecularHamiltonianLinearOperator
+from xquces.seeds import CCSDResidualSeedInfo as PublicCCSDResidualSeedInfo
+from xquces.seeds.residual import (
+    CCSDResidualSeedInfo,
+    _default_high_order_residual_blocks,
+    _parameters_from_ccsd_residual_seed,
+)
 from xquces.utils import build_hydrogen_chain, run_rccsd, run_rhf
 
 
@@ -219,6 +226,88 @@ def _outside_block_mask(parameterization, active_blocks: tuple[str, ...]) -> np.
         if block.name in active_blocks:
             mask[block.slice()] = False
     return mask
+
+
+def test_ccsd_residual_seed_info_import_compatibility():
+    assert LegacyCCSDResidualSeedInfo is CCSDResidualSeedInfo
+    assert PublicCCSDResidualSeedInfo is CCSDResidualSeedInfo
+
+
+def test_library_ccsd_residual_seed_direct_helper_matches_public_method():
+    rng = np.random.default_rng(321)
+    norb = 4
+    nocc = 2
+    t1 = 0.03 * rng.standard_normal((nocc, norb - nocc))
+    t2 = 0.03 * rng.standard_normal((nocc, nocc, norb - nocc, norb - nocc))
+    param = IGCR3SpinRestrictedParameterization(norb=norb, nocc=nocc)
+
+    x_base = param.parameters_from_t_amplitudes(
+        t2,
+        t1=t1,
+        strategy="zero_embed",
+        igcr2_strategy="ucj",
+    )
+    direct = _parameters_from_ccsd_residual_seed(
+        param,
+        t2,
+        t1,
+        x_base,
+        active_blocks=("cubic",),
+        n_iter=1,
+    )
+    public = param.parameters_from_t_amplitudes(
+        t2,
+        t1=t1,
+        strategy="ccsd_residual",
+        igcr2_strategy="ucj",
+        n_iter=1,
+    )
+
+    np.testing.assert_allclose(direct, public, atol=1.0e-14, rtol=0.0)
+
+
+def test_library_ccsd_residual_seed_return_info_fields_are_populated():
+    rng = np.random.default_rng(456)
+    norb = 4
+    nocc = 2
+    t1 = 0.02 * rng.standard_normal((nocc, norb - nocc))
+    t2 = 0.02 * rng.standard_normal((nocc, nocc, norb - nocc, norb - nocc))
+    param = IGCR4SpinRestrictedParameterization(norb=norb, nocc=nocc)
+
+    info = param.parameters_from_t_amplitudes(
+        t2,
+        t1=t1,
+        strategy="ccsd_residual",
+        igcr2_strategy="ucj",
+        n_iter=1,
+        return_info=True,
+    )
+
+    assert isinstance(info, CCSDResidualSeedInfo)
+    assert info.params.shape == (param.n_params,)
+    assert info.active_blocks == ("quartic",)
+    assert len(info.raw_delta_norms) == 1
+    assert len(info.delta_norms) == 1
+    assert len(info.jacobian_ranks) == 1
+    assert len(info.scales) == 1
+    assert np.isfinite(info.overlap_before)
+    assert np.isfinite(info.overlap_after)
+
+
+def test_library_ccsd_residual_default_active_blocks_prefer_reduced_blocks():
+    igcr3_param = IGCR3SpinRestrictedParameterization(norb=4, nocc=2)
+    igcr4_param = IGCR4SpinRestrictedParameterization(norb=4, nocc=2)
+
+    assert _default_high_order_residual_blocks(
+        igcr3_param,
+        "cubic",
+        ("tau", "omega"),
+    ) == ("cubic",)
+    assert _default_high_order_residual_blocks(
+        igcr4_param,
+        "quartic",
+        ("eta", "rho", "sigma"),
+    ) == ("quartic",)
 
 
 def test_library_ccsd_residual_seed_preserves_lower_order_blocks():
