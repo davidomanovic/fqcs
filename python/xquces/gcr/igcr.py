@@ -78,7 +78,6 @@ from xquces.gcr.utils import (
     _final_unitary_from_left_and_right,
     _left_right_ov_adapted_to_native,
     _native_to_left_right_ov_adapted,
-    _orbital_relabeling_unitary,
     _ordered_matrix_from_values,
     _parameters_from_zero_diag_antihermitian,
     _restricted_irreducible_pair_matrix,
@@ -166,19 +165,6 @@ def relabel_igcr2_ansatz_orbitals(
     )
 
 
-def _relabel_igcr2_diagonal(
-    diagonal: IGCR2SpinRestrictedSpec | IGCR2SpinBalancedSpec,
-    old_for_new: np.ndarray,
-) -> IGCR2SpinRestrictedSpec | IGCR2SpinBalancedSpec:
-    if isinstance(diagonal, IGCR2SpinRestrictedSpec):
-        pair = diagonal.pair[np.ix_(old_for_new, old_for_new)]
-        return IGCR2SpinRestrictedSpec(pair=pair)
-    d = diagonal.to_standard()
-    diag = SpinBalancedSpec(
-        same_spin_params=d.same_spin_params[np.ix_(old_for_new, old_for_new)],
-        mixed_spin_params=d.mixed_spin_params[np.ix_(old_for_new, old_for_new)],
-    )
-    return reduce_spin_balanced(diag)
 
 
 def transport_igcr2_ansatz_orbitals(
@@ -191,16 +177,12 @@ def transport_igcr2_ansatz_orbitals(
     )
 
 
-def _zero_igcr2_spin_restricted_spec(norb: int) -> IGCR2SpinRestrictedSpec:
-    return IGCR2SpinRestrictedSpec(pair=np.zeros((norb, norb), dtype=np.float64))
 
 
 def _as_layered_igcr2_spin_restricted_ansatz(
     ansatz: IGCR2Ansatz | IGCR2LayeredAnsatz,
     layers: int,
 ) -> IGCR2LayeredAnsatz:
-    if getattr(ansatz, "is_spin_restricted", True) is False:
-        raise TypeError("expected a spin-restricted ansatz")
     return as_legacy_layered_igcr_ansatz(ansatz, layers, order=2)
 
 
@@ -819,25 +801,8 @@ class IGCR2SpinBalancedParameterization:
 
         return func
 
-def _zero_igcr3_spin_restricted_spec(norb: int) -> IGCR3SpinRestrictedSpec:
-    return IGCR3SpinRestrictedSpec(
-        double_params=np.zeros(norb, dtype=np.float64),
-        pair_values=np.zeros(len(_default_pair_indices(norb)), dtype=np.float64),
-        tau=np.zeros((norb, norb), dtype=np.float64),
-        omega_values=np.zeros(len(_default_triple_indices(norb)), dtype=np.float64),
-    )
 
 
-def _scale_igcr3_spin_restricted_spec(
-    diagonal: IGCR3SpinRestrictedSpec,
-    scale: float,
-) -> IGCR3SpinRestrictedSpec:
-    return IGCR3SpinRestrictedSpec(
-        double_params=np.asarray(diagonal.full_double(), dtype=np.float64) * scale,
-        pair_values=np.asarray(diagonal.pair_values, dtype=np.float64) * scale,
-        tau=np.asarray(diagonal.tau_matrix(), dtype=np.float64) * scale,
-        omega_values=np.asarray(diagonal.omega_vector(), dtype=np.float64) * scale,
-    )
 
 
 def _as_layered_igcr3_spin_restricted_ansatz(
@@ -886,45 +851,6 @@ def _igcr3_ansatz_from_igcr2_any(
     )
 
 
-def _relabel_igcr3_diagonal(
-    diagonal: IGCR3SpinRestrictedSpec,
-    old_for_new: np.ndarray,
-) -> IGCR3SpinRestrictedSpec:
-    d = diagonal
-    norb = d.norb
-    double = d.full_double()[old_for_new]
-    pair = d.pair_matrix()[np.ix_(old_for_new, old_for_new)]
-    tau = d.tau_matrix()[np.ix_(old_for_new, old_for_new)]
-    pair_values = np.asarray(
-        [pair[p, q] for p, q in _default_pair_indices(norb)],
-        dtype=np.float64,
-    )
-    omega_old = {
-        (p, q, r): value for value, (p, q, r) in zip(d.omega_vector(), d.omega_indices)
-    }
-    omega_values = np.asarray(
-        [
-            omega_old[
-                tuple(
-                    sorted(
-                        (
-                            int(old_for_new[p]),
-                            int(old_for_new[q]),
-                            int(old_for_new[r]),
-                        )
-                    )
-                )
-            ]
-            for p, q, r in _default_triple_indices(norb)
-        ],
-        dtype=np.float64,
-    )
-    return IGCR3SpinRestrictedSpec(
-        double_params=double,
-        pair_values=pair_values,
-        tau=tau,
-        omega_values=omega_values,
-    )
 
 
 def relabel_igcr3_ansatz_orbitals(
@@ -1374,31 +1300,8 @@ def igcr3_from_igcr2_ansatz(
         omega_scale=omega_scale,
     )
 
-def _zero_igcr4_spin_restricted_spec(norb: int) -> IGCR4SpinRestrictedSpec:
-    return IGCR4SpinRestrictedSpec(
-        double_params=np.zeros(norb, dtype=np.float64),
-        pair_values=np.zeros(len(_default_pair_indices(norb)), dtype=np.float64),
-        tau=np.zeros((norb, norb), dtype=np.float64),
-        omega_values=np.zeros(len(_default_triple_indices(norb)), dtype=np.float64),
-        eta_values=np.zeros(len(_default_eta_indices(norb)), dtype=np.float64),
-        rho_values=np.zeros(len(_default_rho_indices(norb)), dtype=np.float64),
-        sigma_values=np.zeros(len(_default_sigma_indices(norb)), dtype=np.float64),
-    )
 
 
-def _scale_igcr4_spin_restricted_spec(
-    diagonal: IGCR4SpinRestrictedSpec,
-    scale: float,
-) -> IGCR4SpinRestrictedSpec:
-    return IGCR4SpinRestrictedSpec(
-        double_params=np.asarray(diagonal.full_double(), dtype=np.float64) * scale,
-        pair_values=np.asarray(diagonal.pair_values, dtype=np.float64) * scale,
-        tau=np.asarray(diagonal.tau_matrix(), dtype=np.float64) * scale,
-        omega_values=np.asarray(diagonal.omega_vector(), dtype=np.float64) * scale,
-        eta_values=np.asarray(diagonal.eta_vector(), dtype=np.float64) * scale,
-        rho_values=np.asarray(diagonal.rho_vector(), dtype=np.float64) * scale,
-        sigma_values=np.asarray(diagonal.sigma_vector(), dtype=np.float64) * scale,
-    )
 
 
 def _as_layered_igcr4_spin_restricted_ansatz(
@@ -1468,93 +1371,6 @@ def _igcr4_ansatz_from_igcr2_any(
     )
 
 
-def _relabel_igcr4_diagonal(
-    diagonal: IGCR4SpinRestrictedSpec,
-    old_for_new: np.ndarray,
-) -> IGCR4SpinRestrictedSpec:
-    d = diagonal
-    norb = d.norb
-    double = d.full_double()[old_for_new]
-    pair = d.pair_matrix()[np.ix_(old_for_new, old_for_new)]
-    tau = d.tau_matrix()[np.ix_(old_for_new, old_for_new)]
-
-    pair_values = np.asarray(
-        [pair[p, q] for p, q in _default_pair_indices(norb)],
-        dtype=np.float64,
-    )
-
-    omega_old = {idx: val for idx, val in zip(d.omega_indices, d.omega_vector())}
-    omega_values = np.asarray(
-        [
-            omega_old[
-                tuple(
-                    sorted(
-                        (int(old_for_new[p]), int(old_for_new[q]), int(old_for_new[r]))
-                    )
-                )
-            ]
-            for p, q, r in _default_triple_indices(norb)
-        ],
-        dtype=np.float64,
-    )
-
-    eta_old = {idx: val for idx, val in zip(d.eta_indices, d.eta_vector())}
-    eta_values = np.asarray(
-        [
-            eta_old[
-                (int(old_for_new[p]), int(old_for_new[q]))
-                if old_for_new[p] < old_for_new[q]
-                else (int(old_for_new[q]), int(old_for_new[p]))
-            ]
-            for p, q in _default_eta_indices(norb)
-        ],
-        dtype=np.float64,
-    )
-
-    rho_old = {idx: val for idx, val in zip(d.rho_indices, d.rho_vector())}
-    rho_values = np.asarray(
-        [
-            rho_old[
-                (
-                    int(old_for_new[p]),
-                    min(int(old_for_new[q]), int(old_for_new[r])),
-                    max(int(old_for_new[q]), int(old_for_new[r])),
-                )
-            ]
-            for p, q, r in _default_rho_indices(norb)
-        ],
-        dtype=np.float64,
-    )
-
-    sigma_old = {idx: val for idx, val in zip(d.sigma_indices, d.sigma_vector())}
-    sigma_values = np.asarray(
-        [
-            sigma_old[
-                tuple(
-                    sorted(
-                        (
-                            int(old_for_new[p]),
-                            int(old_for_new[q]),
-                            int(old_for_new[r]),
-                            int(old_for_new[s]),
-                        )
-                    )
-                )
-            ]
-            for p, q, r, s in _default_sigma_indices(norb)
-        ],
-        dtype=np.float64,
-    )
-
-    return IGCR4SpinRestrictedSpec(
-        double_params=double,
-        pair_values=pair_values,
-        tau=tau,
-        omega_values=omega_values,
-        eta_values=eta_values,
-        rho_values=rho_values,
-        sigma_values=sigma_values,
-    )
 
 
 def relabel_igcr4_ansatz_orbitals(
