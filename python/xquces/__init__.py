@@ -37,6 +37,7 @@ from xquces.gcr.igcr import (
     spin_restricted_quartic_seed_from_pair_params,
     spin_restricted_triples_seed_from_pair_params,
 )
+from xquces.gcr.canonical import IGCRAnsatz, IGCRDiagonalCoefficients
 from xquces.gates import (
     apply_gcr_spin_balanced,
     apply_gcr_spin_restricted,
@@ -146,6 +147,8 @@ __all__ = [
     "CanonicalTransformedHamiltonianLinearOperator",
     "run_sqd_from_statevector",
     "GCRAnsatz",
+    "IGCRAnsatz",
+    "IGCRDiagonalCoefficients",
     "GCR2ProductPairUCCDParameterization",
     "GCR3ProductPairUCCDParameterization",
     "GCR4ProductPairUCCDParameterization",
