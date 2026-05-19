@@ -36,6 +36,11 @@ from xquces.gcr.igcr import (
     parameters_from_t2,
     random_parameters,
 )
+from xquces.gcr.canonical import IGCRAnsatz, IGCRDiagonalCoefficients
+from xquces.gcr.canonical_install import install_igcr_parameterization_adapters
+
+install_igcr_parameterization_adapters()
+
 from xquces.gcr.model import GCRAnsatz, gcr_from_ucj_ansatz
 from xquces.gcr.pair_uccd_reference import (
     GCR2ProductPairUCCDParameterization,
@@ -72,6 +77,8 @@ __all__ = [
     "ParameterView",
     "CCSDResidualSeedInfo",
     "GCRAnsatz",
+    "IGCRAnsatz",
+    "IGCRDiagonalCoefficients",
     "GCR2ProductPairUCCDParameterization",
     "GCR3ProductPairUCCDParameterization",
     "GCR4ProductPairUCCDParameterization",
