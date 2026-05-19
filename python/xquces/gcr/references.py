@@ -38,6 +38,16 @@ class CompositeReferenceAnsatzParameterization:
         nref = self.n_reference_params
         return params[:nref], params[nref:]
 
+    def parameter_blocks(self, *, frozen=()):
+        from xquces.gcr.igcr import parameter_blocks
+
+        return parameter_blocks(self, frozen=frozen)
+
+    def parameter_view(self, params: np.ndarray, *, frozen=(), copy: bool = False):
+        from xquces.gcr.igcr import parameter_view
+
+        return parameter_view(self, params, frozen=frozen, copy=copy)
+
     def reference_state_from_parameters(self, params: np.ndarray) -> np.ndarray:
         return self.reference_parameterization.state_from_parameters(params)
 
@@ -175,6 +185,16 @@ class FixedReferenceAnsatzParameterization:
 
     def ansatz_from_parameters(self, params: np.ndarray):
         return self.ansatz_parameterization.ansatz_from_parameters(params)
+
+    def parameter_blocks(self, *, frozen=()):
+        from xquces.gcr.igcr import parameter_blocks
+
+        return parameter_blocks(self, frozen=frozen)
+
+    def parameter_view(self, params: np.ndarray, *, frozen=(), copy: bool = False):
+        from xquces.gcr.igcr import parameter_view
+
+        return parameter_view(self, params, frozen=frozen, copy=copy)
 
     def state_from_parameters(self, params: np.ndarray) -> np.ndarray:
         params = np.asarray(params, dtype=np.float64)

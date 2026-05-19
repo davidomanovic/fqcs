@@ -1,5 +1,7 @@
 from xquces.gcr.igcr import (
     GCRParameterBlock,
+    ParameterBlock,
+    ParameterView,
     IGCR2Ansatz,
     IGCR2LayeredAnsatz,
     IGCR2SpinBalancedParameterization,
@@ -24,6 +26,7 @@ from xquces.gcr.igcr import (
     igcr3_from_igcr2_ansatz,
     orbital_relabeling_from_overlap,
     parameter_blocks,
+    parameter_view,
     parameters_from_t2,
     random_parameters,
     reduce_spin_balanced,
@@ -117,6 +120,7 @@ from xquces.optimize.subspace_linear_method import (
     gradient_coordinate_subspace,
     minimize_subspace_linear_method,
 )
+from xquces.presets import IGCR, PairUCCD_GCR
 from xquces.utils import apply_spin_square, spin_square, build_hydrogen_ring
 
 __all__ = [
@@ -169,6 +173,8 @@ __all__ = [
     "heuristic_restricted_pair_params_from_t2",
     "project_spin_balanced_to_spin_restricted",
     "GCRParameterBlock",
+    "ParameterBlock",
+    "ParameterView",
     "IGCRVariationalCircuit",
     "IGCR2Ansatz",
     "IGCR2SpinBalancedParameterization",
@@ -186,8 +192,11 @@ __all__ = [
     "IGCR4SpinRestrictedParameterization",
     "IGCR4SpinRestrictedSpec",
     "IGCRSpinRestrictedParameterization",
+    "IGCR",
+    "PairUCCD_GCR",
     "embed_ansatz_parameters",
     "parameter_blocks",
+    "parameter_view",
     "parameters_from_t2",
     "random_parameters",
     "gradient_coordinate_subspace",

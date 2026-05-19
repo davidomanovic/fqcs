@@ -1,13 +1,26 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from functools import cache
 from typing import Callable
 
 import ffsim
 import numpy as np
 import scipy.linalg
 
+from xquces.ansatz.parameters import (
+    ParameterBlock,
+    ParameterView,
+    parameter_view as _parameter_view,
+)
+from xquces.charts.diagonal import (
+    RestrictedPairChart,
+    RestrictedPairCoefficients,
+    RestrictedCubicChart,
+    RestrictedCubicCoefficients,
+    RestrictedQuarticChart,
+    RestrictedQuarticCoefficients,
+)
+from xquces.charts.reductions import IGCR3CubicReduction, IGCR4QuarticReduction
 from xquces._lib import (
     apply_igcr3_spin_restricted_in_place_num_rep,
     apply_igcr4_spin_restricted_in_place_num_rep,
@@ -1234,6 +1247,14 @@ class IGCR2SpinRestrictedParameterization:
         return _validate_pairs(self.interaction_pairs, self.norb, allow_diagonal=False)
 
     @property
+    def diagonal_chart(self) -> RestrictedPairChart:
+        return RestrictedPairChart(
+            norb=self.norb,
+            nocc=self.nocc,
+            interaction_pairs=self.interaction_pairs,
+        )
+
+    @property
     def right_orbital_chart(self):
         if self.right_orbital_chart_override is not None:
             return self.right_orbital_chart_override
@@ -1268,12 +1289,12 @@ class IGCR2SpinRestrictedParameterization:
     @property
     def n_pair_params(self):
         if self.shared_diagonal:
-            return len(self.pair_indices)
-        return self.layers * len(self.pair_indices)
+            return self.n_pair_params_per_layer
+        return self.layers * self.n_pair_params_per_layer
 
     @property
     def n_pair_params_per_layer(self):
-        return len(self.pair_indices)
+        return self.diagonal_chart.n_params
 
     @property
     def n_diag_params_per_layer(self):
@@ -1334,40 +1355,37 @@ class IGCR2SpinRestrictedParameterization:
         if params.shape != (self.n_params,):
             raise ValueError(f"Expected {(self.n_params,)}, got {params.shape}.")
         params = self._native_parameters_from_public(params)
-        idx = 0
-        n = self.n_left_orbital_rotation_params
+        view = parameter_view(self, params)
         left = self._left_orbital_chart.unitary_from_parameters(
-            params[idx : idx + n], self.norb
+            view.flat("left"), self.norb
         )
-        idx += n
         n_pair = self.n_pair_params_per_layer
         if self.shared_diagonal:
-            pair = _symmetric_matrix_from_values(
-                params[idx : idx + n_pair], self.norb, self.pair_indices
-            )
+            pair = self.diagonal_chart.coefficients_from_parameters(
+                view.flat("pair")
+            ).pair
             pairs = [pair.copy() for _ in range(self.layers)]
-            idx += n_pair
         else:
-            pairs = []
-            for _ in range(self.layers):
-                pairs.append(
-                    _symmetric_matrix_from_values(
-                        params[idx : idx + n_pair], self.norb, self.pair_indices
-                    )
-                )
-                idx += n_pair
+            pair_values_by_layer = view.flat("pair").reshape(self.layers, n_pair)
+            pairs = [
+                self.diagonal_chart.coefficients_from_parameters(pair_values).pair
+                for pair_values in pair_values_by_layer
+            ]
         middle_rotations = []
         n_middle = self.n_middle_orbital_rotation_params_per_layer
-        for _ in range(self.layers - 1):
+        middle_values = (
+            view.flat("middle").reshape(self.layers - 1, n_middle)
+            if self.layers > 1
+            else np.zeros((0, n_middle), dtype=np.float64)
+        )
+        for middle_params in middle_values:
             middle_rotations.append(
                 self._middle_orbital_chart.unitary_from_parameters(
-                    params[idx : idx + n_middle], self.norb
+                    middle_params, self.norb
                 )
             )
-            idx += n_middle
-        n = self.n_right_orbital_rotation_params
         final = self.right_orbital_chart.unitary_from_parameters(
-            params[idx : idx + n], self.norb
+            view.flat("right"), self.norb
         )
         right = final
         if self.layers == 1:
@@ -1418,33 +1436,37 @@ class IGCR2SpinRestrictedParameterization:
             for diagonal in layered.diagonals
         ]
         out = np.zeros(self.n_params, dtype=np.float64)
-        idx = 0
-        n = self.n_left_orbital_rotation_params
-        out[idx : idx + n] = rotation_params[0]
-        idx += n
-        pair_indices = self.pair_indices
+        view = parameter_view(self, out)
+        view.set("left", rotation_params[0])
         n_pair = self.n_pair_params_per_layer
         if self.shared_diagonal:
             pair_eff = np.mean(np.stack(pair_mats, axis=0), axis=0)
-            out[idx : idx + n_pair] = np.asarray(
-                [pair_eff[p, q] for p, q in pair_indices], dtype=np.float64
+            pair_params, _ = self.diagonal_chart.parameters_from_coefficients(
+                RestrictedPairCoefficients(pair=pair_eff)
             )
-            idx += n_pair
+            view.set("pair", pair_params)
         else:
+            pair_values = []
             for pair_eff in pair_mats:
-                out[idx : idx + n_pair] = np.asarray(
-                    [pair_eff[p, q] for p, q in pair_indices], dtype=np.float64
+                pair_params, _ = self.diagonal_chart.parameters_from_coefficients(
+                    RestrictedPairCoefficients(pair=pair_eff)
                 )
-                idx += n_pair
+                pair_values.append(pair_params)
+            pair_values = np.asarray(pair_values, dtype=np.float64)
+            view.set("pair", pair_values.reshape(view.block("pair").shape))
 
         n_middle = self.n_middle_orbital_rotation_params_per_layer
-        for params_i in rotation_params[1:]:
-            out[idx : idx + n_middle] = params_i
-            idx += n_middle
+        if self.layers > 1:
+            view.set(
+                "middle",
+                np.asarray(rotation_params[1:], dtype=np.float64).reshape(
+                    self.layers - 1, n_middle
+                ),
+            )
 
-        n = self.n_right_orbital_rotation_params
-        out[idx : idx + n] = self.right_orbital_chart.parameters_from_unitary(
-            rotations[-1]
+        view.set(
+            "right",
+            self.right_orbital_chart.parameters_from_unitary(rotations[-1]),
         )
         return self._public_parameters_from_native(out)
 
@@ -1685,33 +1707,24 @@ class IGCR2SpinBalancedParameterization:
         if params.shape != (self.n_params,):
             raise ValueError(f"Expected {(self.n_params,)}, got {params.shape}.")
         params = self._native_parameters_from_public(params)
-        idx = 0
-        n = self.n_left_orbital_rotation_params
+        view = parameter_view(self, params)
         left = self._left_orbital_chart.unitary_from_parameters(
-            params[idx : idx + n], self.norb
+            view.flat("left"), self.norb
         )
-        idx += n
-        same_diag = np.asarray(
-            params[idx : idx + self.n_same_diag_params], dtype=np.float64
-        )
-        idx += self.n_same_diag_params
-        double = np.asarray(params[idx : idx + self.n_double_params], dtype=np.float64)
-        idx += self.n_double_params
+        same_diag = np.asarray(view["same_diag"], dtype=np.float64)
+        double = np.asarray(view["double"], dtype=np.float64)
         same = _symmetric_matrix_from_values(
-            np.asarray(params[idx : idx + self.n_same_spin_params], dtype=np.float64),
+            view.flat("same_spin"),
             self.norb,
             self.same_spin_indices,
         )
-        idx += self.n_same_spin_params
         mixed = _symmetric_matrix_from_values(
-            np.asarray(params[idx : idx + self.n_mixed_spin_params], dtype=np.float64),
+            view.flat("mixed_spin"),
             self.norb,
             self.mixed_spin_indices,
         )
-        idx += self.n_mixed_spin_params
-        n = self.n_right_orbital_rotation_params
         final = self.right_orbital_chart.unitary_from_parameters(
-            params[idx : idx + n], self.norb
+            view.flat("right"), self.norb
         )
         right = final
         return IGCR2Ansatz(
@@ -1757,19 +1770,13 @@ class IGCR2SpinBalancedParameterization:
             ansatz.right, dtype=np.complex128
         )
         out = np.zeros(self.n_params, dtype=np.float64)
-        idx = 0
-        out[idx : idx + self.n_left_orbital_rotation_params] = left_params
-        idx += self.n_left_orbital_rotation_params
-        out[idx : idx + self.n_same_diag_params] = same_diag
-        idx += self.n_same_diag_params
-        out[idx : idx + self.n_double_params] = mixed_double
-        idx += self.n_double_params
-        out[idx : idx + self.n_same_spin_params] = same_full
-        idx += self.n_same_spin_params
-        out[idx : idx + self.n_mixed_spin_params] = mixed_full
-        idx += self.n_mixed_spin_params
-        n = self.n_right_orbital_rotation_params
-        out[idx : idx + n] = self.right_orbital_chart.parameters_from_unitary(right_eff)
+        view = parameter_view(self, out)
+        view.set("left", left_params)
+        view.set("same_diag", same_diag)
+        view.set("double", mixed_double)
+        view.set("same_spin", same_full)
+        view.set("mixed_spin", mixed_full)
+        view.set("right", self.right_orbital_chart.parameters_from_unitary(right_eff))
         return self._public_parameters_from_native(out)
 
     def parameters_from_ucj_ansatz(self, ansatz: UCJAnsatz):
@@ -1815,161 +1822,6 @@ class IGCR2SpinBalancedParameterization:
             )
 
         return func
-
-@dataclass(frozen=True)
-class IGCR3CubicReduction:
-    """Quotient the restricted cubic diagonal basis by fixed-N identities.
-
-    The identities used here are, modulo constants and one-body N_p phases,
-
-        sum_{q != p} D_p N_q
-          + 1/2 (Ne - 2) sum_{q != p} N_p N_q == 0
-
-    and, for p < q,
-
-        sum_{r != p,q} N_p N_q N_r
-          + 2 D_p N_q + 2 D_q N_p - (Ne - 2) N_p N_q == 0.
-
-    They are exact on the fixed-(N_alpha, N_beta) sector and remove the
-    persistent iGCR-3 cubic nullspace without changing the represented state.
-    """
-
-    norb: int
-    nocc: int
-
-    def __post_init__(self):
-        if self.norb < 0:
-            raise ValueError("norb must be nonnegative")
-        if not (0 <= self.nocc <= self.norb):
-            raise ValueError("nocc must satisfy 0 <= nocc <= norb")
-
-    @property
-    def pair_indices(self):
-        return _default_pair_indices(self.norb)
-
-    @property
-    def tau_indices(self):
-        return _default_tau_indices(self.norb)
-
-    @property
-    def omega_indices(self):
-        return _default_triple_indices(self.norb)
-
-    @property
-    def n_pair_full(self):
-        return len(self.pair_indices)
-
-    @property
-    def n_cubic_full(self):
-        return len(self.tau_indices) + len(self.omega_indices)
-
-    @property
-    def gauge_pair_matrix(self):
-        return _igcr3_cubic_reduction_matrices(self.norb, self.nocc)[0]
-
-    @property
-    def gauge_cubic_matrix(self):
-        return _igcr3_cubic_reduction_matrices(self.norb, self.nocc)[1]
-
-    @property
-    def physical_cubic_basis(self):
-        return _igcr3_cubic_reduction_matrices(self.norb, self.nocc)[2]
-
-    @property
-    def n_params(self):
-        return self.physical_cubic_basis.shape[1]
-
-    def full_from_reduced(self, params):
-        params = np.asarray(params, dtype=np.float64)
-        if params.shape != (self.n_params,):
-            raise ValueError(f"Expected {(self.n_params,)}, got {params.shape}.")
-        return self.physical_cubic_basis @ params
-
-    def reduce_full(self, pair_values, cubic_values):
-        pair_values = np.asarray(pair_values, dtype=np.float64)
-        cubic_values = np.asarray(cubic_values, dtype=np.float64)
-        if pair_values.shape != (self.n_pair_full,):
-            raise ValueError(
-                f"Expected pair shape {(self.n_pair_full,)}, got {pair_values.shape}."
-            )
-        if cubic_values.shape != (self.n_cubic_full,):
-            raise ValueError(
-                f"Expected cubic shape {(self.n_cubic_full,)}, got {cubic_values.shape}."
-            )
-
-        basis = self.physical_cubic_basis
-        reduced = basis.T @ cubic_values
-        residual = cubic_values - basis @ reduced
-        gauge_coeff, *_ = np.linalg.lstsq(
-            self.gauge_cubic_matrix,
-            residual,
-            rcond=None,
-        )
-        pair_reduced = pair_values - self.gauge_pair_matrix @ gauge_coeff
-        onebody_phase = np.zeros(self.norb, dtype=np.float64)
-        if self.norb:
-            nelec_total = 2 * int(self.nocc)
-            onebody_phase[:] = (
-                0.5 * (nelec_total - 2) * (nelec_total - 1) * gauge_coeff[: self.norb]
-            )
-        return pair_reduced, reduced, onebody_phase
-
-
-@cache
-def _igcr3_cubic_reduction_matrices(norb: int, nocc: int):
-    pair_indices = _default_pair_indices(norb)
-    tau_indices = _default_tau_indices(norb)
-    omega_indices = _default_triple_indices(norb)
-    n_pair = len(pair_indices)
-    n_tau = len(tau_indices)
-    n_omega = len(omega_indices)
-    n_identity = norb + n_pair
-    nelec_total = 2 * int(nocc)
-
-    pair_index = {pair: i for i, pair in enumerate(pair_indices)}
-    tau_index = {pair: i for i, pair in enumerate(tau_indices)}
-    omega_index = {triple: i for i, triple in enumerate(omega_indices)}
-
-    gauge_pair = np.zeros((n_pair, n_identity), dtype=np.float64)
-    gauge_cubic = np.zeros((n_tau + n_omega, n_identity), dtype=np.float64)
-
-    for p in range(norb):
-        col = p
-        for q in range(norb):
-            if p == q:
-                continue
-            pair = (p, q) if p < q else (q, p)
-            gauge_pair[pair_index[pair], col] += 0.5 * (nelec_total - 2)
-            gauge_cubic[tau_index[(p, q)], col] += 1.0
-
-    for k, (p, q) in enumerate(pair_indices):
-        col = norb + k
-        gauge_pair[pair_index[(p, q)], col] -= nelec_total - 2
-        gauge_cubic[tau_index[(p, q)], col] += 2.0
-        gauge_cubic[tau_index[(q, p)], col] += 2.0
-        for r in range(norb):
-            if r == p or r == q:
-                continue
-            triple = tuple(sorted((p, q, r)))
-            gauge_cubic[n_tau + omega_index[triple], col] += 1.0
-
-    if gauge_cubic.size == 0:
-        physical = np.zeros((0, 0), dtype=np.float64)
-        return gauge_pair, gauge_cubic, physical
-
-    u, s, _ = np.linalg.svd(gauge_cubic, full_matrices=True)
-    if s.size == 0:
-        rank = 0
-    else:
-        rank = int(np.sum(s > max(gauge_cubic.shape) * np.finfo(float).eps * s[0]))
-    physical = np.array(u[:, rank:], copy=True, dtype=np.float64)
-    for j in range(physical.shape[1]):
-        col = physical[:, j]
-        pivot = int(np.argmax(np.abs(col)))
-        if col[pivot] < 0:
-            physical[:, j] *= -1.0
-    return gauge_pair, gauge_cubic, physical
-
 
 def spin_restricted_triples_seed_from_pair_params(
     pair_params: np.ndarray,
@@ -2584,17 +2436,23 @@ class IGCR3SpinRestrictedParameterization:
         return _validate_triples(self.omega_indices_, self.norb)
 
     @property
-    def uses_reduced_cubic_chart(self) -> bool:
-        return (
-            self.reduce_cubic_gauge
-            and self.pair_indices == _default_pair_indices(self.norb)
-            and self.tau_indices == _default_tau_indices(self.norb)
-            and self.omega_indices == _default_triple_indices(self.norb)
+    def diagonal_chart(self) -> RestrictedCubicChart:
+        return RestrictedCubicChart(
+            norb=self.norb,
+            nocc=self.nocc,
+            interaction_pairs=self.interaction_pairs,
+            tau_indices_=self.tau_indices_,
+            omega_indices_=self.omega_indices_,
+            reduce_cubic_gauge=self.reduce_cubic_gauge,
         )
 
     @property
+    def uses_reduced_cubic_chart(self) -> bool:
+        return self.diagonal_chart.uses_reduced_cubic_chart
+
+    @property
     def cubic_reduction(self) -> IGCR3CubicReduction:
-        return IGCR3CubicReduction(self.norb, self.nocc)
+        return self.diagonal_chart.cubic_reduction
 
     @property
     def right_orbital_chart(self):
@@ -2640,7 +2498,7 @@ class IGCR3SpinRestrictedParameterization:
 
     @property
     def n_pair_params_per_layer(self):
-        return len(self.pair_indices)
+        return self.diagonal_chart.n_pair_params
 
     @property
     def n_tau_params(self):
@@ -2650,9 +2508,7 @@ class IGCR3SpinRestrictedParameterization:
 
     @property
     def n_tau_params_per_layer(self):
-        if self.uses_reduced_cubic_chart:
-            return self.cubic_reduction.n_params
-        return len(self.tau_indices)
+        return self.diagonal_chart.n_tau_params
 
     @property
     def n_omega_params(self):
@@ -2662,9 +2518,7 @@ class IGCR3SpinRestrictedParameterization:
 
     @property
     def n_omega_params_per_layer(self):
-        if self.uses_reduced_cubic_chart:
-            return 0
-        return len(self.omega_indices)
+        return self.diagonal_chart.n_omega_params
 
     @property
     def n_diag_params_per_layer(self):
@@ -2749,61 +2603,12 @@ class IGCR3SpinRestrictedParameterization:
         self,
         params: np.ndarray,
     ) -> IGCR3SpinRestrictedSpec:
-        idx = 0
-
-        n = self.n_pair_params_per_layer
-        pair_sparse_values = np.asarray(params[idx : idx + n], dtype=np.float64)
-        pair_sparse = _symmetric_matrix_from_values(
-            pair_sparse_values,
-            self.norb,
-            self.pair_indices,
-        )
-        pair_values = np.asarray(
-            [pair_sparse[p, q] for p, q in _default_pair_indices(self.norb)],
-            dtype=np.float64,
-        )
-        idx += n
-
-        if self.uses_reduced_cubic_chart:
-            n = self.n_tau_params_per_layer
-            cubic = self.cubic_reduction.full_from_reduced(params[idx : idx + n])
-            n_tau_full = len(_default_tau_indices(self.norb))
-            tau = _ordered_matrix_from_values(
-                cubic[:n_tau_full],
-                self.norb,
-                _default_tau_indices(self.norb),
-            )
-            omega_values = np.asarray(cubic[n_tau_full:], dtype=np.float64)
-            idx += n
-        else:
-            n = self.n_tau_params_per_layer
-            tau = _ordered_matrix_from_values(
-                params[idx : idx + n], self.norb, self.tau_indices
-            )
-            idx += n
-
-            n = self.n_omega_params_per_layer
-            omega_sparse_values = np.asarray(params[idx : idx + n], dtype=np.float64)
-            omega_sparse = {
-                triple: value
-                for triple, value in zip(self.omega_indices, omega_sparse_values)
-            }
-            omega_values = np.asarray(
-                [
-                    omega_sparse.get(triple, 0.0)
-                    for triple in _default_triple_indices(self.norb)
-                ],
-                dtype=np.float64,
-            )
-            idx += n
-
-        if idx != self.n_diag_params_per_layer:
-            raise ValueError("diagonal parameter block has inconsistent length")
+        coeffs = self.diagonal_chart.coefficients_from_parameters(params)
         return IGCR3SpinRestrictedSpec(
-            double_params=np.zeros(self.norb, dtype=np.float64),
-            pair_values=pair_values,
-            tau=tau,
-            omega_values=omega_values,
+            double_params=coeffs.double_params,
+            pair_values=coeffs.pair_values,
+            tau=coeffs.tau,
+            omega_values=coeffs.omega_values,
         )
 
     def ansatz_from_parameters(self, params: np.ndarray) -> IGCR3Ansatz | IGCR3LayeredAnsatz:
@@ -2869,75 +2674,14 @@ class IGCR3SpinRestrictedParameterization:
         self,
         diagonal: IGCR3SpinRestrictedSpec,
     ) -> tuple[np.ndarray, np.ndarray]:
-        d = diagonal
-        pair_eff = _restricted_irreducible_pair_matrix(d.full_double(), d.pair_matrix())
-        tau = d.tau_matrix()
-        omega = d.omega_vector()
-
-        full_pair_values = np.asarray(
-            [pair_eff[p, q] for p, q in _default_pair_indices(self.norb)],
-            dtype=np.float64,
-        )
-        full_cubic = np.concatenate(
-            [
-                _values_from_ordered_matrix(tau, _default_tau_indices(self.norb)),
-                omega,
-            ]
-        )
-        reduced_pair_values, reduced_cubic_values, cubic_onebody_phase = (
-            self.cubic_reduction.reduce_full(full_pair_values, full_cubic)
-        )
-
-        phase_vec = (
-            _restricted_left_phase_vector(d.full_double(), self.nocc)
-            + cubic_onebody_phase
-        )
-
-        out = np.zeros(self.n_diag_params_per_layer, dtype=np.float64)
-        idx = 0
-        pair_reduced_matrix = _symmetric_matrix_from_values(
-            reduced_pair_values, self.norb, _default_pair_indices(self.norb)
-        )
-        n = self.n_pair_params_per_layer
-        out[idx : idx + n] = np.asarray(
-            [pair_reduced_matrix[p, q] for p, q in self.pair_indices], dtype=np.float64
-        )
-        idx += n
-
-        if self.uses_reduced_cubic_chart:
-            n = self.n_tau_params_per_layer
-            out[idx : idx + n] = reduced_cubic_values
-            idx += n
-        else:
-            full_cubic_adjusted = self.cubic_reduction.full_from_reduced(
-                reduced_cubic_values
+        return self.diagonal_chart.parameters_from_coefficients(
+            RestrictedCubicCoefficients(
+                double_params=diagonal.full_double(),
+                pair_values=np.asarray(diagonal.pair_values, dtype=np.float64),
+                tau=diagonal.tau_matrix(),
+                omega_values=diagonal.omega_vector(),
             )
-            n_tau_full = len(_default_tau_indices(self.norb))
-            tau_adjusted = _ordered_matrix_from_values(
-                full_cubic_adjusted[:n_tau_full],
-                self.norb,
-                _default_tau_indices(self.norb),
-            )
-            omega_adjusted = {
-                triple: val
-                for triple, val in zip(
-                    _default_triple_indices(self.norb),
-                    full_cubic_adjusted[n_tau_full:],
-                )
-            }
-            n = self.n_tau_params_per_layer
-            out[idx : idx + n] = _values_from_ordered_matrix(
-                tau_adjusted, self.tau_indices
-            )
-            idx += n
-
-            n = self.n_omega_params_per_layer
-            out[idx : idx + n] = np.asarray(
-                [omega_adjusted[t] for t in self.omega_indices], dtype=np.float64
-            )
-            idx += n
-
-        return out, phase_vec
+        )
 
     def parameters_from_ansatz(
         self,
@@ -3240,170 +2984,6 @@ def igcr3_from_igcr2_ansatz(
         tau_scale=tau_scale,
         omega_scale=omega_scale,
     )
-
-@dataclass(frozen=True)
-class IGCR4QuarticReduction:
-    norb: int
-    nocc: int
-
-    def __post_init__(self):
-        if self.norb < 0:
-            raise ValueError("norb must be nonnegative")
-        if not (0 <= self.nocc <= self.norb):
-            raise ValueError("nocc must satisfy 0 <= nocc <= norb")
-
-    @property
-    def tau_indices(self):
-        return _default_tau_indices(self.norb)
-
-    @property
-    def omega_indices(self):
-        return _default_triple_indices(self.norb)
-
-    @property
-    def eta_indices(self):
-        return _default_eta_indices(self.norb)
-
-    @property
-    def rho_indices(self):
-        return _default_rho_indices(self.norb)
-
-    @property
-    def sigma_indices(self):
-        return _default_sigma_indices(self.norb)
-
-    @property
-    def n_cubic_full(self):
-        return len(self.tau_indices) + len(self.omega_indices)
-
-    @property
-    def n_quartic_full(self):
-        return len(self.eta_indices) + len(self.rho_indices) + len(self.sigma_indices)
-
-    @property
-    def gauge_cubic_matrix(self):
-        return _igcr4_quartic_reduction_matrices(self.norb, self.nocc)[0]
-
-    @property
-    def gauge_quartic_matrix(self):
-        return _igcr4_quartic_reduction_matrices(self.norb, self.nocc)[1]
-
-    @property
-    def physical_quartic_basis(self):
-        return _igcr4_quartic_reduction_matrices(self.norb, self.nocc)[2]
-
-    @property
-    def n_params(self):
-        return max(self.n_quartic_full - self.n_cubic_full, 0)
-
-    def full_from_reduced(self, params: np.ndarray) -> np.ndarray:
-        params = np.asarray(params, dtype=np.float64)
-        if params.shape != (self.n_params,):
-            raise ValueError(f"Expected {(self.n_params,)}, got {params.shape}.")
-        if params.size == 0 or np.max(np.abs(params)) <= 1e-14:
-            return np.zeros(self.n_quartic_full, dtype=np.float64)
-        return self.physical_quartic_basis @ params
-
-    def reduce_full(
-        self,
-        cubic_values: np.ndarray,
-        quartic_values: np.ndarray,
-    ) -> tuple[np.ndarray, np.ndarray]:
-        cubic_values = np.asarray(cubic_values, dtype=np.float64)
-        quartic_values = np.asarray(quartic_values, dtype=np.float64)
-        if cubic_values.shape != (self.n_cubic_full,):
-            raise ValueError(
-                f"Expected cubic shape {(self.n_cubic_full,)}, got {cubic_values.shape}."
-            )
-        if quartic_values.shape != (self.n_quartic_full,):
-            raise ValueError(
-                f"Expected quartic shape {(self.n_quartic_full,)}, got {quartic_values.shape}."
-            )
-
-        if quartic_values.size == 0 or np.max(np.abs(quartic_values)) <= 1e-14:
-            return np.array(cubic_values, copy=True), np.zeros(
-                self.n_params,
-                dtype=np.float64,
-            )
-
-        basis = self.physical_quartic_basis
-        reduced = basis.T @ quartic_values
-        residual = quartic_values - basis @ reduced
-        gauge_coeff, *_ = np.linalg.lstsq(
-            self.gauge_quartic_matrix,
-            residual,
-            rcond=None,
-        )
-        cubic_reduced = cubic_values - self.gauge_cubic_matrix @ gauge_coeff
-        return cubic_reduced, reduced
-
-
-@cache
-def _igcr4_quartic_reduction_matrices(norb: int, nocc: int):
-    tau_indices = _default_tau_indices(norb)
-    omega_indices = _default_triple_indices(norb)
-    eta_indices = _default_eta_indices(norb)
-    rho_indices = _default_rho_indices(norb)
-    sigma_indices = _default_sigma_indices(norb)
-
-    n_tau = len(tau_indices)
-    n_omega = len(omega_indices)
-    n_eta = len(eta_indices)
-    n_rho = len(rho_indices)
-    n_sigma = len(sigma_indices)
-    nelec_total = 2 * int(nocc)
-
-    n_id_tau = n_tau
-    n_id_omega = n_omega
-    n_id = n_id_tau + n_id_omega
-
-    tau_index = {pair: i for i, pair in enumerate(tau_indices)}
-    omega_index = {triple: i for i, triple in enumerate(omega_indices)}
-    eta_index = {pair: i for i, pair in enumerate(eta_indices)}
-    rho_index = {triple: i for i, triple in enumerate(rho_indices)}
-    sigma_index = {quad: i for i, quad in enumerate(sigma_indices)}
-
-    gauge_cubic = np.zeros((n_tau + n_omega, n_id), dtype=np.float64)
-    gauge_quartic = np.zeros((n_eta + n_rho + n_sigma, n_id), dtype=np.float64)
-
-    for col, (p, q) in enumerate(tau_indices):
-        gauge_cubic[tau_index[(p, q)], col] -= nelec_total - 3
-        gauge_quartic[eta_index[(p, q) if p < q else (q, p)], col] += 2.0
-        for r in range(norb):
-            if r == p or r == q:
-                continue
-            a, b = (q, r) if q < r else (r, q)
-            gauge_quartic[n_eta + rho_index[(p, a, b)], col] += 1.0
-
-    for local_col, (p, q, r) in enumerate(omega_indices):
-        col = n_id_tau + local_col
-        gauge_cubic[n_tau + omega_index[(p, q, r)], col] -= nelec_total - 3
-        gauge_quartic[n_eta + rho_index[(p, q, r)], col] += 2.0
-        gauge_quartic[n_eta + rho_index[(q, p, r) if p < r else (q, r, p)], col] += 2.0
-        gauge_quartic[n_eta + rho_index[(r, p, q) if p < q else (r, q, p)], col] += 2.0
-        for s in range(norb):
-            if s == p or s == q or s == r:
-                continue
-            quad = tuple(sorted((p, q, r, s)))
-            gauge_quartic[n_eta + n_rho + sigma_index[quad], col] += 1.0
-
-    if gauge_quartic.size == 0:
-        physical = np.zeros((0, 0), dtype=np.float64)
-        return gauge_cubic, gauge_quartic, physical
-
-    u, s, _ = np.linalg.svd(gauge_quartic, full_matrices=True)
-    if s.size == 0:
-        rank = 0
-    else:
-        rank = int(np.sum(s > max(gauge_quartic.shape) * np.finfo(float).eps * s[0]))
-    physical = np.array(u[:, rank:], copy=True, dtype=np.float64)
-    for j in range(physical.shape[1]):
-        col = physical[:, j]
-        pivot = int(np.argmax(np.abs(col)))
-        if col[pivot] < 0:
-            physical[:, j] *= -1.0
-    return gauge_cubic, gauge_quartic, physical
-
 
 def spin_restricted_quartic_seed_from_pair_params(
     pair_params: np.ndarray,
@@ -4228,32 +3808,35 @@ class IGCR4SpinRestrictedParameterization:
         return _validate_sigma_indices(self.sigma_indices_, self.norb)
 
     @property
-    def uses_reduced_cubic_chart(self) -> bool:
-        return (
-            self.reduce_cubic_gauge
-            and self.pair_indices == _default_pair_indices(self.norb)
-            and self.tau_indices == _default_tau_indices(self.norb)
-            and self.omega_indices == _default_triple_indices(self.norb)
+    def diagonal_chart(self) -> RestrictedQuarticChart:
+        return RestrictedQuarticChart(
+            norb=self.norb,
+            nocc=self.nocc,
+            interaction_pairs=self.interaction_pairs,
+            tau_indices_=self.tau_indices_,
+            omega_indices_=self.omega_indices_,
+            eta_indices_=self.eta_indices_,
+            rho_indices_=self.rho_indices_,
+            sigma_indices_=self.sigma_indices_,
+            reduce_cubic_gauge=self.reduce_cubic_gauge,
+            reduce_quartic_gauge=self.reduce_quartic_gauge,
         )
+
+    @property
+    def uses_reduced_cubic_chart(self) -> bool:
+        return self.diagonal_chart.uses_reduced_cubic_chart
 
     @property
     def uses_reduced_quartic_chart(self) -> bool:
-        return (
-            self.reduce_quartic_gauge
-            and self.tau_indices == _default_tau_indices(self.norb)
-            and self.omega_indices == _default_triple_indices(self.norb)
-            and self.eta_indices == _default_eta_indices(self.norb)
-            and self.rho_indices == _default_rho_indices(self.norb)
-            and self.sigma_indices == _default_sigma_indices(self.norb)
-        )
+        return self.diagonal_chart.uses_reduced_quartic_chart
 
     @property
     def cubic_reduction(self) -> IGCR3CubicReduction:
-        return IGCR3CubicReduction(self.norb, self.nocc)
+        return self.diagonal_chart.cubic_reduction
 
     @property
     def quartic_reduction(self) -> IGCR4QuarticReduction:
-        return IGCR4QuarticReduction(self.norb, self.nocc)
+        return self.diagonal_chart.quartic_reduction
 
     @property
     def right_orbital_chart(self):
@@ -4295,7 +3878,7 @@ class IGCR4SpinRestrictedParameterization:
 
     @property
     def n_pair_params_per_layer(self):
-        return len(self.pair_indices)
+        return self.diagonal_chart.n_pair_params
 
     @property
     def n_tau_params(self):
@@ -4305,9 +3888,7 @@ class IGCR4SpinRestrictedParameterization:
 
     @property
     def n_tau_params_per_layer(self):
-        if self.uses_reduced_cubic_chart:
-            return self.cubic_reduction.n_params
-        return len(self.tau_indices)
+        return self.diagonal_chart.n_tau_params
 
     @property
     def n_omega_params(self):
@@ -4317,9 +3898,7 @@ class IGCR4SpinRestrictedParameterization:
 
     @property
     def n_omega_params_per_layer(self):
-        if self.uses_reduced_cubic_chart:
-            return 0
-        return len(self.omega_indices)
+        return self.diagonal_chart.n_omega_params
 
     @property
     def n_eta_params(self):
@@ -4329,9 +3908,7 @@ class IGCR4SpinRestrictedParameterization:
 
     @property
     def n_eta_params_per_layer(self):
-        if self.uses_reduced_quartic_chart:
-            return 0
-        return len(self.eta_indices)
+        return self.diagonal_chart.n_eta_params
 
     @property
     def n_rho_params(self):
@@ -4341,9 +3918,7 @@ class IGCR4SpinRestrictedParameterization:
 
     @property
     def n_rho_params_per_layer(self):
-        if self.uses_reduced_quartic_chart:
-            return self.quartic_reduction.n_params
-        return len(self.rho_indices)
+        return self.diagonal_chart.n_rho_params
 
     @property
     def n_sigma_params(self):
@@ -4353,9 +3928,7 @@ class IGCR4SpinRestrictedParameterization:
 
     @property
     def n_sigma_params_per_layer(self):
-        if self.uses_reduced_quartic_chart:
-            return 0
-        return len(self.sigma_indices)
+        return self.diagonal_chart.n_sigma_params
 
     @property
     def n_diag_params_per_layer(self):
@@ -4451,117 +4024,15 @@ class IGCR4SpinRestrictedParameterization:
         self,
         params: np.ndarray,
     ) -> IGCR4SpinRestrictedSpec:
-        idx = 0
-
-        n = self.n_pair_params_per_layer
-        pair_sparse_values = np.asarray(params[idx : idx + n], dtype=np.float64)
-        pair_sparse = _symmetric_matrix_from_values(
-            pair_sparse_values, self.norb, self.pair_indices
-        )
-        pair_values = np.asarray(
-            [pair_sparse[p, q] for p, q in _default_pair_indices(self.norb)],
-            dtype=np.float64,
-        )
-        idx += n
-
-        if self.uses_reduced_cubic_chart:
-            n = self.n_tau_params_per_layer
-            cubic = self.cubic_reduction.full_from_reduced(params[idx : idx + n])
-            n_tau_full = len(_default_tau_indices(self.norb))
-            tau = _ordered_matrix_from_values(
-                cubic[:n_tau_full],
-                self.norb,
-                _default_tau_indices(self.norb),
-            )
-            omega_values = np.asarray(cubic[n_tau_full:], dtype=np.float64)
-            idx += n
-        else:
-            n = self.n_tau_params_per_layer
-            tau = _ordered_matrix_from_values(
-                params[idx : idx + n], self.norb, self.tau_indices
-            )
-            idx += n
-
-            n = self.n_omega_params_per_layer
-            omega_sparse_values = np.asarray(params[idx : idx + n], dtype=np.float64)
-            omega_sparse = {
-                triple: value
-                for triple, value in zip(self.omega_indices, omega_sparse_values)
-            }
-            omega_values = np.asarray(
-                [
-                    omega_sparse.get(triple, 0.0)
-                    for triple in _default_triple_indices(self.norb)
-                ],
-                dtype=np.float64,
-            )
-            idx += n
-
-        if self.uses_reduced_quartic_chart:
-            n = self.n_rho_params_per_layer
-            quartic = self.quartic_reduction.full_from_reduced(params[idx : idx + n])
-            n_eta_full = len(_default_eta_indices(self.norb))
-            n_rho_full = len(_default_rho_indices(self.norb))
-            eta_values = np.asarray(quartic[:n_eta_full], dtype=np.float64)
-            rho_values = np.asarray(
-                quartic[n_eta_full : n_eta_full + n_rho_full], dtype=np.float64
-            )
-            sigma_values = np.asarray(
-                quartic[n_eta_full + n_rho_full :], dtype=np.float64
-            )
-            idx += n
-        else:
-            n = self.n_eta_params_per_layer
-            eta_sparse_values = np.asarray(params[idx : idx + n], dtype=np.float64)
-            eta_sparse = {
-                pair: value for pair, value in zip(self.eta_indices, eta_sparse_values)
-            }
-            eta_values = np.asarray(
-                [eta_sparse.get(pair, 0.0) for pair in _default_eta_indices(self.norb)],
-                dtype=np.float64,
-            )
-            idx += n
-
-            n = self.n_rho_params_per_layer
-            rho_sparse_values = np.asarray(params[idx : idx + n], dtype=np.float64)
-            rho_sparse = {
-                triple: value
-                for triple, value in zip(self.rho_indices, rho_sparse_values)
-            }
-            rho_values = np.asarray(
-                [
-                    rho_sparse.get(triple, 0.0)
-                    for triple in _default_rho_indices(self.norb)
-                ],
-                dtype=np.float64,
-            )
-            idx += n
-
-            n = self.n_sigma_params_per_layer
-            sigma_sparse_values = np.asarray(params[idx : idx + n], dtype=np.float64)
-            sigma_sparse = {
-                quad: value
-                for quad, value in zip(self.sigma_indices, sigma_sparse_values)
-            }
-            sigma_values = np.asarray(
-                [
-                    sigma_sparse.get(quad, 0.0)
-                    for quad in _default_sigma_indices(self.norb)
-                ],
-                dtype=np.float64,
-            )
-            idx += n
-
-        if idx != self.n_diag_params_per_layer:
-            raise ValueError("diagonal parameter block has inconsistent length")
+        coeffs = self.diagonal_chart.coefficients_from_parameters(params)
         return IGCR4SpinRestrictedSpec(
-            double_params=np.zeros(self.norb, dtype=np.float64),
-            pair_values=pair_values,
-            tau=tau,
-            omega_values=omega_values,
-            eta_values=eta_values,
-            rho_values=rho_values,
-            sigma_values=sigma_values,
+            double_params=coeffs.double_params,
+            pair_values=coeffs.pair_values,
+            tau=coeffs.tau,
+            omega_values=coeffs.omega_values,
+            eta_values=coeffs.eta_values,
+            rho_values=coeffs.rho_values,
+            sigma_values=coeffs.sigma_values,
         )
 
     def ansatz_from_parameters(self, params: np.ndarray) -> IGCR4Ansatz | IGCR4LayeredAnsatz:
@@ -4627,115 +4098,17 @@ class IGCR4SpinRestrictedParameterization:
         self,
         diagonal: IGCR4SpinRestrictedSpec,
     ) -> tuple[np.ndarray, np.ndarray]:
-        d = diagonal
-        pair_eff = _restricted_irreducible_pair_matrix(d.full_double(), d.pair_matrix())
-        tau = d.tau_matrix()
-        omega = d.omega_vector()
-        eta = d.eta_vector()
-        rho = d.rho_vector()
-        sigma = d.sigma_vector()
-
-        full_pair_values = np.asarray(
-            [pair_eff[p, q] for p, q in _default_pair_indices(self.norb)],
-            dtype=np.float64,
+        return self.diagonal_chart.parameters_from_coefficients(
+            RestrictedQuarticCoefficients(
+                double_params=diagonal.full_double(),
+                pair_values=np.asarray(diagonal.pair_values, dtype=np.float64),
+                tau=diagonal.tau_matrix(),
+                omega_values=diagonal.omega_vector(),
+                eta_values=diagonal.eta_vector(),
+                rho_values=diagonal.rho_vector(),
+                sigma_values=diagonal.sigma_vector(),
+            )
         )
-        full_cubic = np.concatenate(
-            [
-                _values_from_ordered_matrix(tau, _default_tau_indices(self.norb)),
-                omega,
-            ]
-        )
-        full_quartic = np.concatenate([eta, rho, sigma])
-
-        if self.uses_reduced_quartic_chart:
-            full_cubic, reduced_quartic_values = self.quartic_reduction.reduce_full(
-                full_cubic,
-                full_quartic,
-            )
-        else:
-            reduced_quartic_values = None
-
-        reduced_pair_values, reduced_cubic_values, cubic_onebody_phase = (
-            self.cubic_reduction.reduce_full(full_pair_values, full_cubic)
-        )
-
-        phase_vec = (
-            _restricted_left_phase_vector(d.full_double(), self.nocc)
-            + cubic_onebody_phase
-        )
-
-        out = np.zeros(self.n_diag_params_per_layer, dtype=np.float64)
-        idx = 0
-
-        n = self.n_pair_params_per_layer
-        pair_reduced_matrix = _symmetric_matrix_from_values(
-            reduced_pair_values, self.norb, _default_pair_indices(self.norb)
-        )
-        out[idx : idx + n] = np.asarray(
-            [pair_reduced_matrix[p, q] for p, q in self.pair_indices], dtype=np.float64
-        )
-        idx += n
-
-        if self.uses_reduced_cubic_chart:
-            n = self.n_tau_params_per_layer
-            out[idx : idx + n] = reduced_cubic_values
-            idx += n
-        else:
-            full_cubic_adjusted = self.cubic_reduction.full_from_reduced(
-                reduced_cubic_values
-            )
-            n_tau_full = len(_default_tau_indices(self.norb))
-            tau_adjusted = _ordered_matrix_from_values(
-                full_cubic_adjusted[:n_tau_full],
-                self.norb,
-                _default_tau_indices(self.norb),
-            )
-            omega_adjusted = {
-                triple: val
-                for triple, val in zip(
-                    _default_triple_indices(self.norb),
-                    full_cubic_adjusted[n_tau_full:],
-                )
-            }
-            n = self.n_tau_params_per_layer
-            out[idx : idx + n] = _values_from_ordered_matrix(
-                tau_adjusted, self.tau_indices
-            )
-            idx += n
-
-            n = self.n_omega_params_per_layer
-            out[idx : idx + n] = np.asarray(
-                [omega_adjusted[t] for t in self.omega_indices], dtype=np.float64
-            )
-            idx += n
-
-        if self.uses_reduced_quartic_chart:
-            n = self.n_rho_params_per_layer
-            out[idx : idx + n] = reduced_quartic_values
-            idx += n
-        else:
-            n = self.n_eta_params_per_layer
-            full_eta = {pair: value for value, pair in zip(eta, d.eta_indices)}
-            out[idx : idx + n] = np.asarray(
-                [full_eta[t] for t in self.eta_indices], dtype=np.float64
-            )
-            idx += n
-
-            n = self.n_rho_params_per_layer
-            full_rho = {triple: value for value, triple in zip(rho, d.rho_indices)}
-            out[idx : idx + n] = np.asarray(
-                [full_rho[t] for t in self.rho_indices], dtype=np.float64
-            )
-            idx += n
-
-            n = self.n_sigma_params_per_layer
-            full_sigma = {quad: value for value, quad in zip(sigma, d.sigma_indices)}
-            out[idx : idx + n] = np.asarray(
-                [full_sigma[t] for t in self.sigma_indices], dtype=np.float64
-            )
-            idx += n
-
-        return out, phase_vec
 
     def parameters_from_ansatz(
         self,
@@ -5115,19 +4488,7 @@ def igcr4_from_igcr2_ansatz(
         sigma_scale=sigma_scale,
     )
 
-@dataclass(frozen=True)
-class GCRParameterBlock:
-    name: str
-    start: int
-    stop: int
-    frozen: bool = False
-
-    @property
-    def size(self) -> int:
-        return self.stop - self.start
-
-    def slice(self) -> slice:
-        return slice(self.start, self.stop)
+GCRParameterBlock = ParameterBlock
 
 
 @dataclass(frozen=True)
@@ -5180,6 +4541,14 @@ class IGCRVariationalCircuit:
         if params.shape != (self.n_params,):
             raise ValueError(f"Expected {(self.n_params,)}, got {params.shape}.")
         return params[self.active_mask]
+
+    def parameter_view(self, params: np.ndarray, *, copy: bool = False) -> ParameterView:
+        return parameter_view(
+            self.parameterization,
+            self.full_parameters_from_active(params),
+            frozen=self.frozen_blocks,
+            copy=copy,
+        )
 
     def ansatz_from_parameters(self, params: np.ndarray):
         return self.parameterization.ansatz_from_parameters(
@@ -5239,20 +4608,97 @@ class IGCRVariationalCircuit:
         return params
 
 
-def _block_sizes(parameterization: object) -> list[tuple[str, int]]:
+def _block_kind(name: str) -> str:
+    if name == "reference":
+        return "reference"
+    if name in {"left", "middle", "right"}:
+        return "orbital"
+    if name in {
+        "pair",
+        "same_diag",
+        "double",
+        "same_spin",
+        "mixed_spin",
+        "tau",
+        "omega",
+        "cubic",
+        "eta",
+        "rho",
+        "sigma",
+        "quartic",
+    }:
+        return "diagonal"
+    return "generic"
+
+
+def _layered_block_shape(
+    parameterization: object,
+    name: str,
+    size: int,
+) -> tuple[int, ...]:
+    if size == 0:
+        return (0,)
+    per_layer_attr = {
+        "pair": "n_pair_params_per_layer",
+        "tau": "n_tau_params_per_layer",
+        "omega": "n_omega_params_per_layer",
+        "cubic": "n_tau_params_per_layer",
+        "eta": "n_eta_params_per_layer",
+        "rho": "n_rho_params_per_layer",
+        "quartic": "n_rho_params_per_layer",
+        "sigma": "n_sigma_params_per_layer",
+        "middle": "n_middle_orbital_rotation_params_per_layer",
+    }.get(name)
+    if per_layer_attr is None or not hasattr(parameterization, per_layer_attr):
+        return (size,)
+    per_layer = int(getattr(parameterization, per_layer_attr))
+    if per_layer <= 0 or size % per_layer:
+        return (size,)
+    n_blocks = size // per_layer
+    if name == "middle":
+        return (n_blocks, per_layer)
+    if getattr(parameterization, "shared_diagonal", False) or n_blocks == 1:
+        return (per_layer,)
+    return (n_blocks, per_layer)
+
+
+def _block_shape(
+    parameterization: object,
+    name: str,
+    size: int,
+) -> tuple[int, ...]:
+    if name in {"same_diag", "double"} and hasattr(parameterization, "norb"):
+        norb = int(getattr(parameterization, "norb"))
+        if size == norb:
+            return (norb,)
+    return _layered_block_shape(parameterization, name, size)
+
+
+def _block_specs(parameterization: object) -> list[tuple[str, int, tuple[int, ...], str]]:
     sizes = []
     if hasattr(parameterization, "n_reference_params") and hasattr(
         parameterization, "ansatz_parameterization"
     ):
         n_reference = int(getattr(parameterization, "n_reference_params", 0))
         if n_reference:
-            sizes.append(("reference", n_reference))
-        sizes.extend(_block_sizes(parameterization.ansatz_parameterization))
+            sizes.append(("reference", n_reference, (n_reference,), "reference"))
+        sizes.extend(_block_specs(parameterization.ansatz_parameterization))
         return sizes
-    ordered_attrs = [
-        ("left", "n_left_orbital_rotation_params"),
-        ("pair", "n_pair_params"),
-    ]
+    if hasattr(parameterization, "ansatz_parameterization"):
+        return _block_specs(parameterization.ansatz_parameterization)
+
+    ordered_attrs = [("left", "n_left_orbital_rotation_params")]
+    if hasattr(parameterization, "n_same_diag_params"):
+        ordered_attrs.extend(
+            [
+                ("same_diag", "n_same_diag_params"),
+                ("double", "n_double_params"),
+                ("same_spin", "n_same_spin_params"),
+                ("mixed_spin", "n_mixed_spin_params"),
+            ]
+        )
+    else:
+        ordered_attrs.append(("pair", "n_pair_params"))
     if hasattr(parameterization, "n_tau_params"):
         if getattr(parameterization, "uses_reduced_cubic_chart", False):
             ordered_attrs.append(("cubic", "n_tau_params"))
@@ -5283,8 +4729,19 @@ def _block_sizes(parameterization: object) -> list[tuple[str, int]]:
     for name, attr in ordered_attrs:
         size = int(getattr(parameterization, attr, 0))
         if size:
-            sizes.append((name, size))
+            sizes.append(
+                (
+                    name,
+                    size,
+                    _block_shape(parameterization, name, size),
+                    _block_kind(name),
+                )
+            )
     return sizes
+
+
+def _block_sizes(parameterization: object) -> list[tuple[str, int]]:
+    return [(name, size) for name, size, _, _ in _block_specs(parameterization)]
 
 
 def parameter_blocks(
@@ -5295,9 +4752,18 @@ def parameter_blocks(
     frozen_set = set(frozen)
     blocks = []
     start = 0
-    for name, size in _block_sizes(parameterization):
+    for name, size, shape, kind in _block_specs(parameterization):
         stop = start + size
-        blocks.append(GCRParameterBlock(name, start, stop, name in frozen_set))
+        blocks.append(
+            GCRParameterBlock(
+                name=name,
+                start=start,
+                stop=stop,
+                shape=shape,
+                kind=kind,
+                frozen=name in frozen_set,
+            )
+        )
         start = stop
     if start != int(parameterization.n_params):
         raise ValueError(
@@ -5305,6 +4771,24 @@ def parameter_blocks(
             f"got {start}, expected {parameterization.n_params}"
         )
     return tuple(blocks)
+
+
+def parameter_view(
+    parameterization: object,
+    params: np.ndarray,
+    *,
+    frozen: tuple[str, ...] | list[str] | set[str] = (),
+    copy: bool = False,
+) -> ParameterView:
+    params = np.asarray(params, dtype=np.float64)
+    expected = int(parameterization.n_params)
+    if params.shape != (expected,):
+        raise ValueError(f"Expected {(expected,)}, got {params.shape}.")
+    return _parameter_view(
+        params,
+        parameter_blocks(parameterization, frozen=frozen),
+        copy=copy,
+    )
 
 
 def random_parameters(
@@ -5529,6 +5013,9 @@ class IGCRSpinRestrictedParameterization:
     ) -> tuple[GCRParameterBlock, ...]:
         return parameter_blocks(self.implementation, frozen=frozen)
 
+    def parameter_view(self, params: np.ndarray, *, copy: bool = False) -> ParameterView:
+        return parameter_view(self.implementation, params, copy=copy)
+
     def random_parameters(
         self,
         scale: float = 1e-3,
@@ -5564,6 +5051,8 @@ __all__ = [
     "GCR2FullUnitaryChart",
     "GCR2TraceFixedFullUnitaryChart",
     "GCRParameterBlock",
+    "ParameterBlock",
+    "ParameterView",
     "CCSDResidualSeedInfo",
     "IGCR2Ansatz",
     "IGCR2LayeredAnsatz",
@@ -5600,6 +5089,7 @@ __all__ = [
     "orbital_relabeling_from_overlap",
     "orbital_transport_unitary_from_overlap",
     "parameter_blocks",
+    "parameter_view",
     "parameters_from_t2",
     "random_parameters",
     "reduce_spin_balanced",
