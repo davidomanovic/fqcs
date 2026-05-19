@@ -3,6 +3,11 @@ import numpy as np
 from xquces.gcr import (
     IGCRAnsatz,
     IGCRDiagonalCoefficients,
+    IGCR2Ansatz,
+    IGCR2LayeredAnsatz,
+    IGCR2SpinBalancedParameterization,
+    IGCR2SpinRestrictedParameterization,
+    IGCR2SpinRestrictedSpec,
     IGCR3Ansatz,
     IGCR3LayeredAnsatz,
     IGCR3SpinRestrictedParameterization,
@@ -19,6 +24,31 @@ def _random_unitary(rng, n):
     q, r = np.linalg.qr(rng.normal(size=(n, n)) + 1j * rng.normal(size=(n, n)))
     phases = np.diag(r) / np.abs(np.diag(r))
     return q * phases
+
+
+def test_diagonal_coefficients_roundtrip_igcr2_spec():
+    pair = np.array(
+        [
+            [0.0, 0.1, -0.2, 0.3],
+            [0.1, 0.0, 0.4, -0.5],
+            [-0.2, 0.4, 0.0, 0.6],
+            [0.3, -0.5, 0.6, 0.0],
+        ]
+    )
+    spec = IGCR2SpinRestrictedSpec(pair=pair)
+
+    coeffs = IGCRDiagonalCoefficients.from_igcr2_spec(spec)
+    out = coeffs.to_igcr2_spec()
+
+    np.testing.assert_allclose(out.to_standard().pair_params, spec.to_standard().pair_params)
+    assert coeffs.order == 2
+    assert coeffs.omega_values.size == 4
+    assert coeffs.eta_values.size == 6
+    assert not np.any(coeffs.tau)
+    assert not np.any(coeffs.omega_values)
+    assert not np.any(coeffs.eta_values)
+    assert not np.any(coeffs.rho_values)
+    assert not np.any(coeffs.sigma_values)
 
 
 def test_diagonal_coefficients_roundtrip_igcr3_spec():
@@ -61,6 +91,35 @@ def test_diagonal_coefficients_roundtrip_igcr4_spec():
     np.testing.assert_allclose(out.eta_vector(), spec.eta_vector())
     np.testing.assert_allclose(out.rho_vector(), spec.rho_vector())
     np.testing.assert_allclose(out.sigma_vector(), spec.sigma_vector())
+
+
+def test_igcr2_legacy_ansatz_roundtrip_through_generic_preserves_state():
+    rng = np.random.default_rng(2468)
+    norb = 4
+    nocc = 2
+    nelec = (nocc, nocc)
+    pair = rng.normal(scale=0.01, size=(norb, norb))
+    pair = 0.5 * (pair + pair.T)
+    np.fill_diagonal(pair, 0.0)
+    ansatz = IGCR2Ansatz(
+        diagonal=IGCR2SpinRestrictedSpec(pair=pair),
+        left=_random_unitary(rng, norb),
+        right=_random_unitary(rng, norb),
+        nocc=nocc,
+    )
+
+    generic = ansatz.to_generic()
+    assert isinstance(generic, IGCRAnsatz)
+    assert generic.order == 2
+    assert generic.n_layers == 1
+
+    legacy = IGCR2Ansatz.from_generic(generic)
+    ref = hartree_fock_state(norb, nelec)
+    np.testing.assert_allclose(
+        legacy.apply(ref, nelec),
+        generic.apply(ref, nelec),
+        atol=1e-12,
+    )
 
 
 def test_igcr3_legacy_ansatz_roundtrip_through_generic_preserves_state():
@@ -128,6 +187,27 @@ def test_igcr4_legacy_ansatz_roundtrip_through_generic_preserves_state():
         generic.apply(ref, nelec),
         atol=1e-12,
     )
+
+
+def test_igcr2_spin_restricted_parameterization_returns_legacy_via_generic_builders():
+    param = IGCR2SpinRestrictedParameterization(norb=4, nocc=2, layers=2)
+    params = np.zeros(param.n_params)
+    ansatz = param.ansatz_from_parameters(params)
+
+    assert isinstance(ansatz, IGCR2LayeredAnsatz)
+    generic = ansatz.to_generic()
+    assert isinstance(generic, IGCRAnsatz)
+    assert generic.order == 2
+    assert generic.n_layers == 2
+
+
+def test_igcr2_spin_balanced_parameterization_remains_legacy_only():
+    param = IGCR2SpinBalancedParameterization(norb=4, nocc=2)
+    params = np.zeros(param.n_params)
+    ansatz = param.ansatz_from_parameters(params)
+
+    assert isinstance(ansatz, IGCR2Ansatz)
+    assert ansatz.is_spin_balanced
 
 
 def test_igcr3_parameterization_returns_legacy_via_generic_builders():
