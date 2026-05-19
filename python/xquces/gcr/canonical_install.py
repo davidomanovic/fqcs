@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sys
+
 from xquces.gcr.canonical import (
     IGCRAnsatz,
     IGCRDiagonalCoefficients,
@@ -7,7 +9,9 @@ from xquces.gcr.canonical import (
 )
 from xquces.gcr.canonical_layering import as_legacy_layered_igcr_ansatz
 from xquces.gcr.canonical_transform import (
+    relabel_igcr_ansatz_orbitals,
     relabel_legacy_igcr_ansatz_orbitals,
+    transport_igcr_ansatz_orbitals,
     transport_legacy_igcr_ansatz_orbitals,
 )
 
@@ -182,6 +186,11 @@ def install_igcr_parameterization_adapters() -> None:
     legacy_igcr.IGCR4SpinRestrictedParameterization._layered_ansatz_from_core = (
         _igcr4_layered_ansatz_from_core
     )
+
+    parent = sys.modules.get("xquces")
+    if parent is not None:
+        parent.relabel_igcr_ansatz_orbitals = relabel_igcr_ansatz_orbitals
+        parent.transport_igcr_ansatz_orbitals = transport_igcr_ansatz_orbitals
 
 
 __all__ = ["install_igcr_parameterization_adapters"]
