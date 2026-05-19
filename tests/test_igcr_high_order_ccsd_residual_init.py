@@ -16,6 +16,10 @@ from xquces.gcr.igcr import (
 )
 from xquces.hamiltonians import MolecularHamiltonianLinearOperator
 from xquces.seeds import CCSDResidualSeedInfo as PublicCCSDResidualSeedInfo
+from xquces.seeds.high_order import (
+    igcr3_parameters_from_t_amplitudes,
+    igcr4_parameters_from_t_amplitudes,
+)
 from xquces.seeds.residual import (
     CCSDResidualSeedInfo,
     _default_high_order_residual_blocks,
@@ -226,6 +230,189 @@ def _outside_block_mask(parameterization, active_blocks: tuple[str, ...]) -> np.
         if block.name in active_blocks:
             mask[block.slice()] = False
     return mask
+
+
+def _small_high_order_t_amplitudes(seed: int = 700):
+    rng = np.random.default_rng(seed)
+    norb = 4
+    nocc = 2
+    t1 = 0.02 * rng.standard_normal((nocc, norb - nocc))
+    t2 = 0.02 * rng.standard_normal((nocc, nocc, norb - nocc, norb - nocc))
+    return t1, t2
+
+
+def _assert_residual_seed_info_allclose(actual, expected, *, atol=1.0e-14):
+    assert isinstance(actual, CCSDResidualSeedInfo)
+    assert isinstance(expected, CCSDResidualSeedInfo)
+    np.testing.assert_allclose(actual.params, expected.params, atol=atol, rtol=0.0)
+    assert actual.active_blocks == expected.active_blocks
+    np.testing.assert_allclose(
+        actual.raw_delta_norms,
+        expected.raw_delta_norms,
+        atol=atol,
+        rtol=0.0,
+    )
+    np.testing.assert_allclose(
+        actual.delta_norms,
+        expected.delta_norms,
+        atol=atol,
+        rtol=0.0,
+    )
+    assert actual.jacobian_ranks == expected.jacobian_ranks
+    np.testing.assert_allclose(actual.scales, expected.scales, atol=atol, rtol=0.0)
+    assert np.isclose(actual.overlap_before, expected.overlap_before, atol=atol)
+    assert np.isclose(actual.overlap_after, expected.overlap_after, atol=atol)
+
+
+def test_high_order_seed_function_imports_work():
+    assert callable(igcr3_parameters_from_t_amplitudes)
+    assert callable(igcr4_parameters_from_t_amplitudes)
+
+
+def test_high_order_seed_module_matches_igcr3_method_zero_embed():
+    t1, t2 = _small_high_order_t_amplitudes(701)
+    param = IGCR3SpinRestrictedParameterization(norb=4, nocc=2)
+
+    method = param.parameters_from_t_amplitudes(
+        t2,
+        t1=t1,
+        strategy="zero_embed",
+        igcr2_strategy="ucj",
+    )
+    direct = igcr3_parameters_from_t_amplitudes(
+        param,
+        t2,
+        t1=t1,
+        strategy="zero_embed",
+        igcr2_strategy="ucj",
+    )
+
+    np.testing.assert_allclose(direct, method, atol=1.0e-14, rtol=0.0)
+
+
+def test_high_order_seed_module_matches_igcr3_method_ccsd_residual():
+    t1, t2 = _small_high_order_t_amplitudes(702)
+    param = IGCR3SpinRestrictedParameterization(norb=4, nocc=2)
+
+    method = param.parameters_from_t_amplitudes(
+        t2,
+        t1=t1,
+        strategy="ccsd_residual",
+        igcr2_strategy="ucj",
+        n_iter=1,
+    )
+    direct = igcr3_parameters_from_t_amplitudes(
+        param,
+        t2,
+        t1=t1,
+        strategy="ccsd_residual",
+        igcr2_strategy="ucj",
+        n_iter=1,
+    )
+
+    np.testing.assert_allclose(direct, method, atol=1.0e-14, rtol=0.0)
+
+
+def test_high_order_seed_module_matches_igcr3_method_ccsd_residual_info():
+    t1, t2 = _small_high_order_t_amplitudes(703)
+    param = IGCR3SpinRestrictedParameterization(norb=4, nocc=2)
+
+    method = param.parameters_from_t_amplitudes(
+        t2,
+        t1=t1,
+        strategy="ccsd_residual",
+        igcr2_strategy="ucj",
+        n_iter=1,
+        return_info=True,
+    )
+    direct = igcr3_parameters_from_t_amplitudes(
+        param,
+        t2,
+        t1=t1,
+        strategy="ccsd_residual",
+        igcr2_strategy="ucj",
+        n_iter=1,
+        return_info=True,
+    )
+
+    _assert_residual_seed_info_allclose(direct, method)
+    assert direct.active_blocks == ("cubic",)
+
+
+def test_high_order_seed_module_matches_igcr4_method_zero_embed():
+    t1, t2 = _small_high_order_t_amplitudes(704)
+    param = IGCR4SpinRestrictedParameterization(norb=4, nocc=2)
+
+    method = param.parameters_from_t_amplitudes(
+        t2,
+        t1=t1,
+        strategy="zero_embed",
+        igcr3_strategy="zero_embed",
+        igcr2_strategy="ucj",
+    )
+    direct = igcr4_parameters_from_t_amplitudes(
+        param,
+        t2,
+        t1=t1,
+        strategy="zero_embed",
+        igcr3_strategy="zero_embed",
+        igcr2_strategy="ucj",
+    )
+
+    np.testing.assert_allclose(direct, method, atol=1.0e-14, rtol=0.0)
+
+
+def test_high_order_seed_module_matches_igcr4_method_ccsd_residual():
+    t1, t2 = _small_high_order_t_amplitudes(705)
+    param = IGCR4SpinRestrictedParameterization(norb=4, nocc=2)
+
+    method = param.parameters_from_t_amplitudes(
+        t2,
+        t1=t1,
+        strategy="ccsd_residual",
+        igcr3_strategy="zero_embed",
+        igcr2_strategy="ucj",
+        n_iter=1,
+    )
+    direct = igcr4_parameters_from_t_amplitudes(
+        param,
+        t2,
+        t1=t1,
+        strategy="ccsd_residual",
+        igcr3_strategy="zero_embed",
+        igcr2_strategy="ucj",
+        n_iter=1,
+    )
+
+    np.testing.assert_allclose(direct, method, atol=1.0e-14, rtol=0.0)
+
+
+def test_high_order_seed_module_matches_igcr4_method_ccsd_residual_info():
+    t1, t2 = _small_high_order_t_amplitudes(706)
+    param = IGCR4SpinRestrictedParameterization(norb=4, nocc=2)
+
+    method = param.parameters_from_t_amplitudes(
+        t2,
+        t1=t1,
+        strategy="ccsd_residual",
+        igcr3_strategy="zero_embed",
+        igcr2_strategy="ucj",
+        n_iter=1,
+        return_info=True,
+    )
+    direct = igcr4_parameters_from_t_amplitudes(
+        param,
+        t2,
+        t1=t1,
+        strategy="ccsd_residual",
+        igcr3_strategy="zero_embed",
+        igcr2_strategy="ucj",
+        n_iter=1,
+        return_info=True,
+    )
+
+    _assert_residual_seed_info_allclose(direct, method)
+    assert direct.active_blocks == ("quartic",)
 
 
 def test_ccsd_residual_seed_info_import_compatibility():
