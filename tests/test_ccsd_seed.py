@@ -14,6 +14,7 @@ from xquces.gcr.igcr import (
     IGCR2LayeredAnsatz,
     IGCR2SpinBalancedParameterization,
     IGCR2SpinRestrictedParameterization,
+    _native_igcr2_seed_from_ccsd_t_amplitudes,
     layered_igcr2_from_ccsd_t_amplitudes,
     layered_igcr2_from_ucj_t_amplitudes,
 )
@@ -31,6 +32,7 @@ from xquces.seeds.ucj import (
     layered_igcr2_from_ccsd_t_amplitudes as seed_layered_igcr2_from_ccsd_t_amplitudes,
     layered_igcr2_from_ucj_t_amplitudes as seed_layered_igcr2_from_ucj_t_amplitudes,
 )
+from xquces.seeds.native_igcr2 import native_igcr2_seed_from_ccsd_t_amplitudes
 
 
 def _small_t2(nocc: int = 2, nvirt: int = 3, seed: int = 0) -> np.ndarray:
@@ -335,6 +337,12 @@ class TestLayeredIGCR2FromCCSD:
 # ---------------------------------------------------------------------------
 
 class TestIGCR2ParameterizationFromTAmplitudes:
+    _direct_seed_options = {
+        "right_mixing_eps": (0.05,),
+        "target_scales": (0.05,),
+        "j_mixing_scales": (0.0,),
+    }
+
     def test_single_layer_param_shape(self):
         nocc, nvirt = 2, 3
         norb = nocc + nvirt
@@ -373,6 +381,141 @@ class TestIGCR2ParameterizationFromTAmplitudes:
         param = IGCR2SpinRestrictedParameterization(norb=norb, nocc=nocc)
         with pytest.raises(ValueError, match="only defined for iGCR3/iGCR4"):
             param.parameters_from_t_amplitudes(t2, strategy="ccsd_residual")
+
+    def test_direct_strategy_still_works_through_parameterization(self):
+        nocc, nvirt = 2, 2
+        norb = nocc + nvirt
+        t2 = _small_t2(nocc, nvirt, seed=200)
+        t1 = _small_t1(nocc, nvirt, seed=201)
+        param = IGCR2SpinRestrictedParameterization(norb=norb, nocc=nocc)
+
+        x = param.parameters_from_t_amplitudes(
+            t2,
+            t1=t1,
+            strategy="direct",
+            **self._direct_seed_options,
+        )
+        state = param.apply(hartree_fock_state(norb, (nocc, nocc)), (nocc, nocc))
+        psi = state.state_from_parameters(x)
+
+        assert x.shape == (param.n_params,)
+        assert np.all(np.isfinite(x))
+        assert np.isclose(np.linalg.norm(psi), 1.0, atol=1.0e-12)
+
+    def test_native_seed_module_returns_igcr2_ansatz(self):
+        nocc, nvirt = 2, 2
+        norb = nocc + nvirt
+        t2 = _small_t2(nocc, nvirt, seed=202)
+        t1 = _small_t1(nocc, nvirt, seed=203)
+        param = IGCR2SpinRestrictedParameterization(norb=norb, nocc=nocc)
+
+        ansatz = native_igcr2_seed_from_ccsd_t_amplitudes(
+            param,
+            t2,
+            t1=t1,
+            **self._direct_seed_options,
+        )
+
+        assert isinstance(ansatz, IGCR2Ansatz)
+
+    def test_legacy_native_seed_wrapper_still_works(self):
+        nocc, nvirt = 2, 2
+        norb = nocc + nvirt
+        t2 = _small_t2(nocc, nvirt, seed=204)
+        t1 = _small_t1(nocc, nvirt, seed=205)
+        param = IGCR2SpinRestrictedParameterization(norb=norb, nocc=nocc)
+
+        ansatz = _native_igcr2_seed_from_ccsd_t_amplitudes(
+            param,
+            t2,
+            t1=t1,
+            **self._direct_seed_options,
+        )
+
+        assert isinstance(ansatz, IGCR2Ansatz)
+
+    def test_direct_seed_parameters_and_states_match_extracted_module(self):
+        nocc, nvirt = 2, 2
+        norb = nocc + nvirt
+        nelec = (nocc, nocc)
+        t2 = _small_t2(nocc, nvirt, seed=206)
+        t1 = _small_t1(nocc, nvirt, seed=207)
+        param = IGCR2SpinRestrictedParameterization(norb=norb, nocc=nocc)
+        reference = hartree_fock_state(norb, nelec)
+
+        x_method = param.parameters_from_t_amplitudes(
+            t2,
+            t1=t1,
+            strategy="direct",
+            **self._direct_seed_options,
+        )
+        ansatz_new = native_igcr2_seed_from_ccsd_t_amplitudes(
+            param,
+            t2,
+            t1=t1,
+            **self._direct_seed_options,
+        )
+        ansatz_legacy = _native_igcr2_seed_from_ccsd_t_amplitudes(
+            param,
+            t2,
+            t1=t1,
+            **self._direct_seed_options,
+        )
+        x_new = param.parameters_from_ansatz(ansatz_new)
+        x_legacy = param.parameters_from_ansatz(ansatz_legacy)
+
+        np.testing.assert_allclose(x_new, x_method, atol=1.0e-12)
+        np.testing.assert_allclose(x_legacy, x_method, atol=1.0e-12)
+        np.testing.assert_allclose(
+            param.apply(reference, nelec).state_from_parameters(x_new),
+            param.apply(reference, nelec).state_from_parameters(x_legacy),
+            atol=1.0e-12,
+        )
+
+    def test_direct_seed_verbose_executes_without_error(self, capsys):
+        nocc, nvirt = 2, 2
+        norb = nocc + nvirt
+        t2 = _small_t2(nocc, nvirt, seed=208)
+        t1 = _small_t1(nocc, nvirt, seed=209)
+        param = IGCR2SpinRestrictedParameterization(norb=norb, nocc=nocc)
+
+        native_igcr2_seed_from_ccsd_t_amplitudes(
+            param,
+            t2,
+            t1=t1,
+            verbose=True,
+            **self._direct_seed_options,
+        )
+        captured = capsys.readouterr()
+
+        assert "native iGCR2 seed" in captured.out
+
+    def test_direct_seed_hamiltonian_none_path_is_default_residual_score(self):
+        nocc, nvirt = 2, 2
+        norb = nocc + nvirt
+        t2 = _small_t2(nocc, nvirt, seed=210)
+        t1 = _small_t1(nocc, nvirt, seed=211)
+        param = IGCR2SpinRestrictedParameterization(norb=norb, nocc=nocc)
+
+        implicit_none = native_igcr2_seed_from_ccsd_t_amplitudes(
+            param,
+            t2,
+            t1=t1,
+            **self._direct_seed_options,
+        )
+        explicit_none = native_igcr2_seed_from_ccsd_t_amplitudes(
+            param,
+            t2,
+            t1=t1,
+            hamiltonian=None,
+            **self._direct_seed_options,
+        )
+
+        np.testing.assert_allclose(
+            param.parameters_from_ansatz(implicit_none),
+            param.parameters_from_ansatz(explicit_none),
+            atol=1.0e-12,
+        )
 
     def test_two_layer_pair_blocks_differ(self):
         """The pair parameter blocks for layer 0 and layer 1 must differ."""
