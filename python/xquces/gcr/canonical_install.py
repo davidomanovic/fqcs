@@ -191,6 +191,12 @@ def install_igcr_parameterization_adapters() -> None:
     if parent is not None:
         parent.relabel_igcr_ansatz_orbitals = relabel_igcr_ansatz_orbitals
         parent.transport_igcr_ansatz_orbitals = transport_igcr_ansatz_orbitals
+        parent.relabel_igcr2_ansatz_orbitals = _relabel_igcr2_ansatz_orbitals
+        parent.relabel_igcr3_ansatz_orbitals = _relabel_igcr3_ansatz_orbitals
+        parent.relabel_igcr4_ansatz_orbitals = _relabel_igcr4_ansatz_orbitals
+        parent.transport_igcr2_ansatz_orbitals = _transport_igcr2_ansatz_orbitals
+        parent.transport_igcr3_ansatz_orbitals = _transport_igcr3_ansatz_orbitals
+        parent.transport_igcr4_ansatz_orbitals = _transport_igcr4_ansatz_orbitals
 
 
 __all__ = ["install_igcr_parameterization_adapters"]
