@@ -61,7 +61,9 @@ from xquces.gcr.restricted_model import (
 from xquces.gcr.canonical import IGCRAnsatz, IGCRDiagonalCoefficients
 from xquces.gcr.canonical_layering import as_legacy_layered_igcr_ansatz
 from xquces.gcr.canonical_transform import (
+    relabel_igcr_ansatz_orbitals,
     relabel_legacy_igcr_ansatz_orbitals,
+    transport_igcr_ansatz_orbitals,
     transport_legacy_igcr_ansatz_orbitals,
 )
 from xquces.gcr.utils import (
@@ -259,26 +261,276 @@ def _native_igcr2_seed_from_ccsd_t_amplitudes(
     )
 
 
+
+_AUTO_RIGHT_CHART = "auto"
+
+
 @dataclass(frozen=True)
-class IGCR2SpinRestrictedParameterization:
+class RestrictedIGCRDiagonalAdapter:
+    """Order-specific diagonal chart adapter for canonical spin-restricted iGCR."""
+
+    order: int
     norb: int
     nocc: int
+    interaction_pairs: list[tuple[int, int]] | None = None
+    tau_indices_: list[tuple[int, int]] | None = None
+    omega_indices_: list[tuple[int, int, int]] | None = None
+    eta_indices_: list[tuple[int, int]] | None = None
+    rho_indices_: list[tuple[int, int, int]] | None = None
+    sigma_indices_: list[tuple[int, int, int, int]] | None = None
+    reduce_cubic_gauge: bool = True
+    reduce_quartic_gauge: bool = True
+
+    def __post_init__(self):
+        if self.order not in {2, 3, 4}:
+            raise ValueError("order must be 2, 3, or 4")
+
+    @property
+    def pair_indices(self) -> list[tuple[int, int]]:
+        return _validate_pairs(self.interaction_pairs, self.norb, allow_diagonal=False)
+
+    @property
+    def tau_indices(self) -> list[tuple[int, int]]:
+        return _validate_ordered_pairs(self.tau_indices_, self.norb)
+
+    @property
+    def omega_indices(self) -> list[tuple[int, int, int]]:
+        return _validate_triples(self.omega_indices_, self.norb)
+
+    @property
+    def eta_indices(self) -> list[tuple[int, int]]:
+        return _validate_pairs(self.eta_indices_, self.norb, allow_diagonal=False)
+
+    @property
+    def rho_indices(self) -> list[tuple[int, int, int]]:
+        return _validate_rho_indices(self.rho_indices_, self.norb)
+
+    @property
+    def sigma_indices(self) -> list[tuple[int, int, int, int]]:
+        return _validate_sigma_indices(self.sigma_indices_, self.norb)
+
+    @property
+    def diagonal_chart(self):
+        if self.order == 2:
+            return RestrictedPairChart(
+                norb=self.norb,
+                nocc=self.nocc,
+                interaction_pairs=self.interaction_pairs,
+            )
+        if self.order == 3:
+            return RestrictedCubicChart(
+                norb=self.norb,
+                nocc=self.nocc,
+                interaction_pairs=self.interaction_pairs,
+                tau_indices_=self.tau_indices_,
+                omega_indices_=self.omega_indices_,
+                reduce_cubic_gauge=self.reduce_cubic_gauge,
+            )
+        return RestrictedQuarticChart(
+            norb=self.norb,
+            nocc=self.nocc,
+            interaction_pairs=self.interaction_pairs,
+            tau_indices_=self.tau_indices_,
+            omega_indices_=self.omega_indices_,
+            eta_indices_=self.eta_indices_,
+            rho_indices_=self.rho_indices_,
+            sigma_indices_=self.sigma_indices_,
+            reduce_cubic_gauge=self.reduce_cubic_gauge,
+            reduce_quartic_gauge=self.reduce_quartic_gauge,
+        )
+
+    @property
+    def uses_reduced_cubic_chart(self) -> bool:
+        return bool(
+            self.order >= 3
+            and getattr(self.diagonal_chart, "uses_reduced_cubic_chart", False)
+        )
+
+    @property
+    def uses_reduced_quartic_chart(self) -> bool:
+        return bool(
+            self.order >= 4
+            and getattr(self.diagonal_chart, "uses_reduced_quartic_chart", False)
+        )
+
+    @property
+    def cubic_reduction(self) -> IGCR3CubicReduction:
+        if self.order < 3:
+            raise AttributeError("order-2 iGCR has no cubic reduction")
+        return self.diagonal_chart.cubic_reduction
+
+    @property
+    def quartic_reduction(self) -> IGCR4QuarticReduction:
+        if self.order < 4:
+            raise AttributeError("order-2/3 iGCR has no quartic reduction")
+        return self.diagonal_chart.quartic_reduction
+
+    @property
+    def n_pair_params_per_layer(self) -> int:
+        return int(self.diagonal_chart.n_pair_params if self.order >= 3 else self.diagonal_chart.n_params)
+
+    @property
+    def n_tau_params_per_layer(self) -> int:
+        return int(self.diagonal_chart.n_tau_params) if self.order >= 3 else 0
+
+    @property
+    def n_omega_params_per_layer(self) -> int:
+        return int(self.diagonal_chart.n_omega_params) if self.order >= 3 else 0
+
+    @property
+    def n_eta_params_per_layer(self) -> int:
+        return int(self.diagonal_chart.n_eta_params) if self.order >= 4 else 0
+
+    @property
+    def n_rho_params_per_layer(self) -> int:
+        return int(self.diagonal_chart.n_rho_params) if self.order >= 4 else 0
+
+    @property
+    def n_sigma_params_per_layer(self) -> int:
+        return int(self.diagonal_chart.n_sigma_params) if self.order >= 4 else 0
+
+    @property
+    def n_diag_params_per_layer(self) -> int:
+        return int(self.diagonal_chart.n_params)
+
+    def diagonal_from_native_parameters(
+        self,
+        params: np.ndarray,
+    ) -> IGCRDiagonalCoefficients:
+        coeffs = self.diagonal_chart.coefficients_from_parameters(params)
+        if self.order == 2:
+            return IGCRDiagonalCoefficients.from_igcr2_spec(
+                IGCR2SpinRestrictedSpec(pair=coeffs.pair)
+            )
+        if self.order == 3:
+            return IGCRDiagonalCoefficients.from_igcr3_spec(
+                IGCR3SpinRestrictedSpec(
+                    double_params=coeffs.double_params,
+                    pair_values=coeffs.pair_values,
+                    tau=coeffs.tau,
+                    omega_values=coeffs.omega_values,
+                )
+            )
+        return IGCRDiagonalCoefficients.from_igcr4_spec(
+            IGCR4SpinRestrictedSpec(
+                double_params=coeffs.double_params,
+                pair_values=coeffs.pair_values,
+                tau=coeffs.tau,
+                omega_values=coeffs.omega_values,
+                eta_values=coeffs.eta_values,
+                rho_values=coeffs.rho_values,
+                sigma_values=coeffs.sigma_values,
+            )
+        )
+
+    def native_parameters_from_diagonal(
+        self,
+        diagonal: IGCRDiagonalCoefficients,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        if self.order == 2:
+            spec = diagonal.to_igcr2_spec()
+            return self.diagonal_chart.parameters_from_coefficients(
+                RestrictedPairCoefficients(pair=np.asarray(spec.pair, dtype=np.float64))
+            )
+        if self.order == 3:
+            spec = diagonal.to_igcr3_spec()
+            return self.diagonal_chart.parameters_from_coefficients(
+                RestrictedCubicCoefficients(
+                    double_params=spec.full_double(),
+                    pair_values=np.asarray(spec.pair_values, dtype=np.float64),
+                    tau=spec.tau_matrix(),
+                    omega_values=spec.omega_vector(),
+                )
+            )
+        spec = diagonal.to_igcr4_spec()
+        return self.diagonal_chart.parameters_from_coefficients(
+            RestrictedQuarticCoefficients(
+                double_params=spec.full_double(),
+                pair_values=np.asarray(spec.pair_values, dtype=np.float64),
+                tau=spec.tau_matrix(),
+                omega_values=spec.omega_vector(),
+                eta_values=spec.eta_vector(),
+                rho_values=spec.rho_vector(),
+                sigma_values=spec.sigma_vector(),
+            )
+        )
+
+    def sector_sizes(self, owner: "IGCRSpinRestrictedParameterization") -> dict[str, int]:
+        if self.order == 2:
+            return {
+                "left": owner.n_left_orbital_rotation_params,
+                "pair": owner.n_pair_params,
+                "middle": owner.n_middle_orbital_rotation_params,
+                "right": owner.n_right_orbital_rotation_params,
+                "total": owner.n_params,
+            }
+        if self.order == 3:
+            return {
+                "left": owner.n_left_orbital_rotation_params,
+                "double": owner.n_double_params,
+                "pair": owner.n_pair_params,
+                "tau": 0 if owner.uses_reduced_cubic_chart else owner.n_tau_params,
+                "omega": owner.n_omega_params,
+                "cubic": owner.n_tau_params
+                if owner.uses_reduced_cubic_chart
+                else (owner.n_tau_params + owner.n_omega_params),
+                "middle": owner.n_middle_orbital_rotation_params,
+                "right": owner.n_right_orbital_rotation_params,
+                "total": owner.n_params,
+            }
+        return {
+            "left": owner.n_left_orbital_rotation_params,
+            "pair": owner.n_pair_params,
+            "tau": 0 if owner.uses_reduced_cubic_chart else owner.n_tau_params,
+            "omega": owner.n_omega_params,
+            "eta": 0 if owner.uses_reduced_quartic_chart else owner.n_eta_params,
+            "rho": owner.n_rho_params,
+            "sigma": 0 if owner.uses_reduced_quartic_chart else owner.n_sigma_params,
+            "middle": owner.n_middle_orbital_rotation_params,
+            "right": owner.n_right_orbital_rotation_params,
+            "total": owner.n_params,
+        }
+
+
+@dataclass(frozen=True)
+class IGCRSpinRestrictedParameterization:
+    """Canonical spin-restricted iGCR parameterization with order as data."""
+
+    norb: int
+    nocc: int
+    order: int = 2
     layers: int = 1
     shared_diagonal: bool = False
     interaction_pairs: list[tuple[int, int]] | None = None
+    tau_indices_: list[tuple[int, int]] | None = None
+    omega_indices_: list[tuple[int, int, int]] | None = None
+    eta_indices_: list[tuple[int, int]] | None = None
+    rho_indices_: list[tuple[int, int, int]] | None = None
+    sigma_indices_: list[tuple[int, int, int, int]] | None = None
+    reduce_cubic_gauge: bool = True
+    reduce_quartic_gauge: bool = True
     left_orbital_chart: object = field(default_factory=IGCR2LeftUnitaryChart)
     middle_orbital_chart: object = field(default_factory=IGCR2LeftUnitaryChart)
-    right_orbital_chart_override: object | None = None
+    right_orbital_chart_override: object | None | str = _AUTO_RIGHT_CHART
     real_right_orbital_chart: bool = False
-    left_right_ov_relative_scale: float | None = 1.0
+    left_right_ov_relative_scale: float | None = None
 
     def __post_init__(self):
+        if self.order not in {2, 3, 4}:
+            raise ValueError("order must be 2, 3, or 4")
         if not (0 <= self.nocc <= self.norb):
             raise ValueError("nocc must satisfy 0 <= nocc <= norb")
         if int(self.layers) != self.layers or self.layers < 1:
             raise ValueError("layers must be a positive integer")
         object.__setattr__(self, "layers", int(self.layers))
         _validate_pairs(self.interaction_pairs, self.norb, allow_diagonal=False)
+        if self.order >= 3:
+            _validate_ordered_pairs(self.tau_indices_, self.norb)
+            _validate_triples(self.omega_indices_, self.norb)
+        if self.order >= 4:
+            _validate_pairs(self.eta_indices_, self.norb, allow_diagonal=False)
+            _validate_rho_indices(self.rho_indices_, self.norb)
+            _validate_sigma_indices(self.sigma_indices_, self.norb)
         if self.left_right_ov_relative_scale is not None and (
             not np.isfinite(float(self.left_right_ov_relative_scale))
             or self.left_right_ov_relative_scale <= 0
@@ -286,20 +538,75 @@ class IGCR2SpinRestrictedParameterization:
             raise ValueError("left_right_ov_relative_scale must be positive or None")
 
     @property
-    def pair_indices(self):
-        return _validate_pairs(self.interaction_pairs, self.norb, allow_diagonal=False)
-
-    @property
-    def diagonal_chart(self) -> RestrictedPairChart:
-        return RestrictedPairChart(
+    def diagonal_adapter(self) -> RestrictedIGCRDiagonalAdapter:
+        return RestrictedIGCRDiagonalAdapter(
+            order=self.order,
             norb=self.norb,
             nocc=self.nocc,
             interaction_pairs=self.interaction_pairs,
+            tau_indices_=self.tau_indices_,
+            omega_indices_=self.omega_indices_,
+            eta_indices_=self.eta_indices_,
+            rho_indices_=self.rho_indices_,
+            sigma_indices_=self.sigma_indices_,
+            reduce_cubic_gauge=self.reduce_cubic_gauge,
+            reduce_quartic_gauge=self.reduce_quartic_gauge,
+        )
+
+    @property
+    def pair_indices(self):
+        return self.diagonal_adapter.pair_indices
+
+    @property
+    def tau_indices(self):
+        return self.diagonal_adapter.tau_indices
+
+    @property
+    def omega_indices(self):
+        return self.diagonal_adapter.omega_indices
+
+    @property
+    def eta_indices(self):
+        return self.diagonal_adapter.eta_indices
+
+    @property
+    def rho_indices(self):
+        return self.diagonal_adapter.rho_indices
+
+    @property
+    def sigma_indices(self):
+        return self.diagonal_adapter.sigma_indices
+
+    @property
+    def diagonal_chart(self):
+        return self.diagonal_adapter.diagonal_chart
+
+    @property
+    def uses_reduced_cubic_chart(self) -> bool:
+        return self.diagonal_adapter.uses_reduced_cubic_chart
+
+    @property
+    def uses_reduced_quartic_chart(self) -> bool:
+        return self.diagonal_adapter.uses_reduced_quartic_chart
+
+    @property
+    def cubic_reduction(self) -> IGCR3CubicReduction:
+        return self.diagonal_adapter.cubic_reduction
+
+    @property
+    def quartic_reduction(self) -> IGCR4QuarticReduction:
+        return self.diagonal_adapter.quartic_reduction
+
+    @property
+    def _right_override_is_auto(self) -> bool:
+        return self.right_orbital_chart_override is None or (
+            isinstance(self.right_orbital_chart_override, str)
+            and self.right_orbital_chart_override == _AUTO_RIGHT_CHART
         )
 
     @property
     def right_orbital_chart(self):
-        if self.right_orbital_chart_override is not None:
+        if not self._right_override_is_auto:
             return self.right_orbital_chart_override
         if self.real_right_orbital_chart:
             return IGCR2RealReferenceOVUnitaryChart(self.nocc, self.norb - self.nocc)
@@ -315,12 +622,17 @@ class IGCR2SpinRestrictedParameterization:
 
     @property
     def _right_depends_on_prefix(self) -> bool:
-        return False
+        return self.order >= 3
+
+    @property
+    def _project_final_reference_ov(self) -> bool:
+        return self.order >= 3 and self._right_override_is_auto
 
     @property
     def _layered_core(self) -> SpinRestrictedLayeredDiagonalParameterizationCore:
+        adapter = self.diagonal_adapter
         return SpinRestrictedLayeredDiagonalParameterizationCore(
-            order=2,
+            order=self.order,
             norb=self.norb,
             nocc=self.nocc,
             layers=self.layers,
@@ -328,14 +640,13 @@ class IGCR2SpinRestrictedParameterization:
             left_orbital_chart=self._left_orbital_chart,
             middle_orbital_chart=self._middle_orbital_chart,
             right_orbital_chart=self.right_orbital_chart,
-            n_diag_params_per_layer=self.diagonal_chart.n_params,
-            diagonal_from_parameters=self._diagonal_from_native_parameters,
-            parameters_from_diagonal=self._native_parameters_from_diagonal,
+            n_diag_params_per_layer=adapter.n_diag_params_per_layer,
+            diagonal_from_parameters=adapter.diagonal_from_native_parameters,
+            parameters_from_diagonal=adapter.native_parameters_from_diagonal,
             right_depends_on_prefix=self._right_depends_on_prefix,
-            project_final_reference_ov=False,
+            project_final_reference_ov=self._project_final_reference_ov,
             left_right_ov_transform_scale=self._left_right_ov_transform_scale,
         )
-
 
     @property
     def n_left_orbital_rotation_params(self):
@@ -353,15 +664,56 @@ class IGCR2SpinRestrictedParameterization:
     def n_double_params(self):
         return 0
 
-    @property
-    def n_pair_params(self):
-        if self.shared_diagonal:
-            return self.n_pair_params_per_layer
-        return self.layers * self.n_pair_params_per_layer
+    def _scaled_layer_count(self, per_layer: int) -> int:
+        return int(per_layer if self.shared_diagonal else self.layers * per_layer)
 
     @property
     def n_pair_params_per_layer(self):
-        return self.diagonal_chart.n_params
+        return self.diagonal_adapter.n_pair_params_per_layer
+
+    @property
+    def n_pair_params(self):
+        return self._scaled_layer_count(self.n_pair_params_per_layer)
+
+    @property
+    def n_tau_params_per_layer(self):
+        return self.diagonal_adapter.n_tau_params_per_layer
+
+    @property
+    def n_tau_params(self):
+        return self._scaled_layer_count(self.n_tau_params_per_layer)
+
+    @property
+    def n_omega_params_per_layer(self):
+        return self.diagonal_adapter.n_omega_params_per_layer
+
+    @property
+    def n_omega_params(self):
+        return self._scaled_layer_count(self.n_omega_params_per_layer)
+
+    @property
+    def n_eta_params_per_layer(self):
+        return self.diagonal_adapter.n_eta_params_per_layer
+
+    @property
+    def n_eta_params(self):
+        return self._scaled_layer_count(self.n_eta_params_per_layer)
+
+    @property
+    def n_rho_params_per_layer(self):
+        return self.diagonal_adapter.n_rho_params_per_layer
+
+    @property
+    def n_rho_params(self):
+        return self._scaled_layer_count(self.n_rho_params_per_layer)
+
+    @property
+    def n_sigma_params_per_layer(self):
+        return self.diagonal_adapter.n_sigma_params_per_layer
+
+    @property
+    def n_sigma_params(self):
+        return self._scaled_layer_count(self.n_sigma_params_per_layer)
 
     @property
     def n_diag_params_per_layer(self):
@@ -381,6 +733,8 @@ class IGCR2SpinRestrictedParameterization:
 
     @property
     def _left_right_ov_transform_scale(self):
+        if self.order >= 3:
+            return None
         return _left_right_ov_transform_scale_for(
             self.right_orbital_chart,
             self.left_right_ov_relative_scale,
@@ -396,29 +750,73 @@ class IGCR2SpinRestrictedParameterization:
     def n_params(self):
         return self._layered_core.n_params
 
-    def _diagonal_from_native_parameters(
-        self,
-        params: np.ndarray,
-    ) -> IGCRDiagonalCoefficients:
-        coeffs = self.diagonal_chart.coefficients_from_parameters(params)
-        return IGCRDiagonalCoefficients.from_igcr2_spec(
-            IGCR2SpinRestrictedSpec(pair=coeffs.pair)
-        )
+    def sector_sizes(self) -> dict[str, int]:
+        return self.diagonal_adapter.sector_sizes(self)
 
-    def _native_parameters_from_diagonal(
-        self,
-        diagonal: IGCRDiagonalCoefficients,
-    ) -> tuple[np.ndarray, np.ndarray]:
-        spec = diagonal.to_igcr2_spec()
-        return self.diagonal_chart.parameters_from_coefficients(
-            RestrictedPairCoefficients(pair=np.asarray(spec.pair, dtype=np.float64))
-        )
+    def ansatz_from_parameters(self, params: np.ndarray) -> IGCRAnsatz:
+        return self._layered_core.ansatz_from_parameters(params)
 
-    def ansatz_from_parameters(self, params: np.ndarray):
-        return self._layered_core.ansatz_from_parameters(params).to_legacy()
-
-    def parameters_from_ansatz(self, ansatz: IGCRAnsatz | IGCR2Ansatz | IGCR2LayeredAnsatz):
+    def parameters_from_ansatz(self, ansatz: IGCRAnsatz | object) -> np.ndarray:
         return self._layered_core.parameters_from_ansatz(ansatz)
+
+    def parameters_from_igcr2_ansatz(
+        self,
+        ansatz: IGCRAnsatz | IGCR2Ansatz | IGCR2LayeredAnsatz,
+        *,
+        tau_scale: float = 0.0,
+        omega_scale: float = 0.0,
+        eta_scale: float = 0.0,
+        rho_scale: float = 0.0,
+        sigma_scale: float = 0.0,
+    ) -> np.ndarray:
+        generic = ansatz if isinstance(ansatz, IGCRAnsatz) else ansatz.to_generic()
+        if generic.order != 2:
+            raise TypeError("expected an iGCR-2 ansatz")
+        legacy = generic.to_igcr2_ansatz()
+        if self.order == 2:
+            return self.parameters_from_ansatz(generic)
+        if self.order == 3:
+            return self.parameters_from_ansatz(
+                _igcr3_ansatz_from_igcr2_any(
+                    legacy,
+                    tau_scale=tau_scale,
+                    omega_scale=omega_scale,
+                )
+            )
+        return self.parameters_from_ansatz(
+            _igcr4_ansatz_from_igcr2_any(
+                legacy,
+                tau_scale=tau_scale,
+                omega_scale=omega_scale,
+                eta_scale=eta_scale,
+                rho_scale=rho_scale,
+                sigma_scale=sigma_scale,
+            )
+        )
+
+    def parameters_from_igcr3_ansatz(
+        self,
+        ansatz: IGCRAnsatz | IGCR3Ansatz | IGCR3LayeredAnsatz,
+        *,
+        eta_scale: float = 0.0,
+        rho_scale: float = 0.0,
+        sigma_scale: float = 0.0,
+    ) -> np.ndarray:
+        generic = ansatz if isinstance(ansatz, IGCRAnsatz) else ansatz.to_generic()
+        if generic.order != 3:
+            raise TypeError("expected an iGCR-3 ansatz")
+        if self.order == 3:
+            return self.parameters_from_ansatz(generic)
+        if self.order != 4:
+            raise TypeError("cannot embed an iGCR-3 ansatz into iGCR-2")
+        return self.parameters_from_ansatz(
+            _igcr4_ansatz_from_igcr3_any(
+                generic.to_igcr3_ansatz(),
+                eta_scale=eta_scale,
+                rho_scale=rho_scale,
+                sigma_scale=sigma_scale,
+            )
+        )
 
     def parameters_from_t_amplitudes(
         self,
@@ -426,25 +824,27 @@ class IGCR2SpinRestrictedParameterization:
         t1: np.ndarray | None = None,
         **seed_options,
     ) -> np.ndarray:
-        """Seed parameters from CCSD amplitudes through the UCJ lift.
+        if self.order == 2:
+            strategy = seed_options.pop("strategy", seed_options.pop("seed_strategy", "ucj"))
+            if strategy in {"ccsd_residual", "state_residual", "residual"}:
+                raise ValueError("CCSD-residual seeding is only defined for iGCR3/iGCR4")
+            if strategy in {"ucj", "ucj_lift", "ucj-t"} or self.layers != 1:
+                return self.parameters_from_ucj_t_amplitudes(t2, t1=t1, **seed_options)
+            if strategy not in {"direct", "native"}:
+                raise ValueError(f"Unknown iGCR2 t-amplitude seed strategy: {strategy!r}")
+            for key in ("optimize", "regularization", "options"):
+                seed_options.pop(key, None)
+            ansatz = _native_igcr2_seed_from_ccsd_t_amplitudes(
+                self, t2, t1=t1, **seed_options
+            )
+            return self.parameters_from_ansatz(ansatz)
+        if self.order == 3:
+            from xquces.seeds.high_order import igcr3_parameters_from_t_amplitudes
 
-        The default path is the UCJ-lift seed so that iGCR2 initialized from
-        CCSD amplitudes matches the corresponding UCJ state.  The older native
-        one-layer construction remains available with ``strategy="direct"``.
-        """
-        strategy = seed_options.pop("strategy", seed_options.pop("seed_strategy", "ucj"))
-        if strategy in {"ccsd_residual", "state_residual", "residual"}:
-            raise ValueError("CCSD-residual seeding is only defined for iGCR3/iGCR4")
-        if strategy in {"ucj", "ucj_lift", "ucj-t"} or self.layers != 1:
-            return self.parameters_from_ucj_t_amplitudes(t2, t1=t1, **seed_options)
-        if strategy not in {"direct", "native"}:
-            raise ValueError(f"Unknown iGCR2 t-amplitude seed strategy: {strategy!r}")
-        for key in ("optimize", "regularization", "options"):
-            seed_options.pop(key, None)
-        ansatz = _native_igcr2_seed_from_ccsd_t_amplitudes(
-            self, t2, t1=t1, **seed_options
-        )
-        return self.parameters_from_ansatz(ansatz)
+            return igcr3_parameters_from_t_amplitudes(self, t2, t1=t1, **seed_options)
+        from xquces.seeds.high_order import igcr4_parameters_from_t_amplitudes
+
+        return igcr4_parameters_from_t_amplitudes(self, t2, t1=t1, **seed_options)
 
     def parameters_from_ucj_t_amplitudes(
         self,
@@ -452,24 +852,53 @@ class IGCR2SpinRestrictedParameterization:
         t1: np.ndarray | None = None,
         **df_options,
     ) -> np.ndarray:
-        """Seed parameters by lifting ffsim's UCJ t-amplitude initializer."""
+        if self.order != 2:
+            raise ValueError("UCJ-lift t-amplitude seeding is only defined for iGCR2")
         ansatz = layered_igcr2_from_ucj_t_amplitudes(
             t2, t1=t1, layers=self.layers, nocc=self.nocc, **df_options
         )
         return self.parameters_from_ansatz(ansatz)
 
-    def parameters_from_ucj_ansatz(self, ansatz: UCJAnsatz):
-        seeded = _igcr2_layered_spin_restricted_ansatz_from_ucj(
-            ansatz,
-            self.nocc,
-            self.layers,
+    def parameters_from_ucj_ansatz(self, ansatz: UCJAnsatz, **scales) -> np.ndarray:
+        if self.order == 2:
+            seeded = _igcr2_layered_spin_restricted_ansatz_from_ucj(
+                ansatz,
+                self.nocc,
+                self.layers,
+            )
+            return self.parameters_from_ansatz(seeded)
+        if self.order == 3:
+            return self.parameters_from_ansatz(
+                IGCR3Ansatz.from_ucj_ansatz(ansatz, self.nocc, **scales)
+            )
+        return self.parameters_from_ansatz(
+            IGCR4Ansatz.from_ucj_ansatz(ansatz, self.nocc, **scales)
         )
-        return self.parameters_from_ansatz(seeded)
+
+    def parameters_from_gcr_ansatz(self, ansatz: GCRAnsatz, **scales) -> np.ndarray:
+        if self.order == 2:
+            return self.parameters_from_ansatz(
+                IGCR2Ansatz.from_gcr_ansatz(ansatz, self.nocc)
+            )
+        if self.order == 3:
+            return self.parameters_from_ansatz(
+                IGCR3Ansatz.from_gcr_ansatz(ansatz, self.nocc, **scales)
+            )
+        return self.parameters_from_ansatz(
+            IGCR4Ansatz.from_gcr_ansatz(ansatz, self.nocc, **scales)
+        )
+
+    def _canonical_from_transfer_ansatz(self, ansatz: object) -> IGCRAnsatz:
+        if isinstance(ansatz, IGCRAnsatz):
+            return ansatz
+        if getattr(ansatz, "is_spin_restricted", True) is False:
+            raise TypeError("expected a spin-restricted iGCR ansatz")
+        return ansatz.to_generic() if hasattr(ansatz, "to_generic") else IGCRAnsatz.from_legacy(ansatz)
 
     def transfer_parameters_from(
         self,
         previous_parameters: np.ndarray,
-        previous_parameterization: "IGCR2SpinRestrictedParameterization | None" = None,
+        previous_parameterization: "IGCRSpinRestrictedParameterization | None" = None,
         old_for_new: np.ndarray | None = None,
         phases: np.ndarray | None = None,
         orbital_overlap: np.ndarray | None = None,
@@ -478,7 +907,8 @@ class IGCR2SpinRestrictedParameterization:
         if previous_parameterization is None:
             previous_parameterization = self
         ansatz = previous_parameterization.ansatz_from_parameters(previous_parameters)
-        if ansatz.nocc != self.nocc:
+        generic = self._canonical_from_transfer_ansatz(ansatz)
+        if generic.nocc != self.nocc:
             raise ValueError(
                 "previous ansatz nocc does not match this parameterization"
             )
@@ -492,10 +922,28 @@ class IGCR2SpinRestrictedParameterization:
                 nocc=self.nocc,
                 block_diagonal=block_diagonal,
             )
-            ansatz = transport_igcr2_ansatz_orbitals(ansatz, basis_change)
+            generic = transport_igcr_ansatz_orbitals(generic, basis_change)
         elif old_for_new is not None:
-            ansatz = relabel_igcr2_ansatz_orbitals(ansatz, old_for_new, phases)
-        return self.parameters_from_ansatz(ansatz)
+            generic = relabel_igcr_ansatz_orbitals(generic, old_for_new, phases)
+
+        if generic.order == self.order:
+            return self.parameters_from_ansatz(generic)
+        if generic.order == 2:
+            return self.parameters_from_igcr2_ansatz(generic)
+        if generic.order == 3:
+            return self.parameters_from_igcr3_ansatz(generic)
+        raise TypeError(f"Unsupported ansatz order for transfer: {generic.order!r}")
+
+    def _uses_full_right_for_reference(
+        self,
+        reference: object,
+        nelec: tuple[int, int],
+    ) -> bool:
+        from xquces.gcr.references import reference_is_hartree_fock_state
+
+        if not self._right_override_is_auto:
+            return False
+        return not reference_is_hartree_fock_state(reference, self.norb, nelec)
 
     def apply(
         self,
@@ -505,20 +953,13 @@ class IGCR2SpinRestrictedParameterization:
         from dataclasses import replace
 
         from xquces.gcr.charts import GCR2FullUnitaryChart
-        from xquces.gcr.references import (
-            apply_ansatz_parameterization,
-            reference_is_hartree_fock_state,
-        )
+        from xquces.gcr.references import apply_ansatz_parameterization
 
         if nelec is None:
             nelec = (self.nocc, self.nocc)
         nelec = tuple(int(x) for x in nelec)
         parameterization = self
-        use_full_right = (
-            self.right_orbital_chart_override is None
-            and not reference_is_hartree_fock_state(reference, self.norb, nelec)
-        )
-        if use_full_right:
+        if self._uses_full_right_for_reference(reference, nelec):
             parameterization = replace(
                 self,
                 right_orbital_chart_override=GCR2FullUnitaryChart(),
@@ -526,9 +967,12 @@ class IGCR2SpinRestrictedParameterization:
         return apply_ansatz_parameterization(parameterization, reference, nelec)
 
     def params_to_vec(
-        self, reference_vec: np.ndarray, nelec: tuple[int, int]
+        self, reference_vec: np.ndarray, nelec: tuple[int, int] | None = None
     ) -> Callable[[np.ndarray], np.ndarray]:
         reference_vec = np.asarray(reference_vec, dtype=np.complex128)
+        if nelec is None:
+            nelec = (self.nocc, self.nocc)
+        nelec = tuple(int(x) for x in nelec)
 
         def func(params: np.ndarray) -> np.ndarray:
             return self.ansatz_from_parameters(params).apply(
@@ -536,6 +980,90 @@ class IGCR2SpinRestrictedParameterization:
             )
 
         return func
+
+    def circuit(
+        self,
+        reference: object | None = None,
+        nelec: tuple[int, int] | None = None,
+        *,
+        frozen_blocks: tuple[str, ...] | list[str] | set[str] = (),
+        base_parameters: np.ndarray | None = None,
+    ) -> IGCRVariationalCircuit:
+        from dataclasses import replace
+
+        from xquces.gcr.charts import GCR2FullUnitaryChart
+
+        parameterization = self
+        if reference is not None:
+            if nelec is None:
+                nelec = (self.nocc, self.nocc)
+            nelec = tuple(int(x) for x in nelec)
+            if self._uses_full_right_for_reference(reference, nelec):
+                parameterization = replace(
+                    self,
+                    right_orbital_chart_override=GCR2FullUnitaryChart(),
+                )
+        return IGCRVariationalCircuit(
+            parameterization=parameterization,
+            reference=reference,
+            nelec=None if nelec is None else tuple(int(x) for x in nelec),
+            frozen_blocks=tuple(frozen_blocks),
+            base_parameters=base_parameters,
+        )
+
+    def parameter_blocks(
+        self,
+        *,
+        frozen: tuple[str, ...] | list[str] | set[str] = (),
+    ) -> tuple[GCRParameterBlock, ...]:
+        return parameter_blocks(self, frozen=frozen)
+
+    def parameter_view(self, params: np.ndarray, *, copy: bool = False) -> ParameterView:
+        return parameter_view(self, params, copy=copy)
+
+    def random_parameters(
+        self,
+        scale: float = 1e-3,
+        *,
+        seed: int | np.random.Generator | None = None,
+        blocks: tuple[str, ...] | list[str] | set[str] | None = None,
+    ) -> np.ndarray:
+        return random_parameters(
+            self,
+            scale=scale,
+            seed=seed,
+            blocks=blocks,
+        )
+
+    def parameters_from_t2(
+        self,
+        t2: np.ndarray,
+        *,
+        source_order: int | None = None,
+        **kwargs,
+    ) -> np.ndarray:
+        from xquces.seeds.dispatch import parameters_from_t2 as dispatch_parameters_from_t2
+
+        return dispatch_parameters_from_t2(
+            self,
+            t2,
+            source_order=source_order,
+            **kwargs,
+        )
+
+
+@dataclass(frozen=True)
+class IGCR2SpinRestrictedParameterization(IGCRSpinRestrictedParameterization):
+    """Compatibility wrapper for canonical order-2 spin-restricted iGCR."""
+
+    order: int = field(default=2, init=False)
+    right_orbital_chart_override: object | None | str = None
+    left_right_ov_relative_scale: float | None = 1.0
+
+    def ansatz_from_parameters(self, params: np.ndarray) -> IGCR2Ansatz | IGCR2LayeredAnsatz:
+        return super().ansatz_from_parameters(params).to_legacy()
+
+
 
 
 @dataclass(frozen=True)
@@ -848,388 +1376,19 @@ def transport_igcr3_ansatz_orbitals(
     )
 
 
+
 @dataclass(frozen=True)
-class IGCR3SpinRestrictedParameterization:
-    norb: int
-    nocc: int
-    layers: int = 1
-    shared_diagonal: bool = False
-    interaction_pairs: list[tuple[int, int]] | None = None
-    tau_indices_: list[tuple[int, int]] | None = None
-    omega_indices_: list[tuple[int, int, int]] | None = None
-    reduce_cubic_gauge: bool = True
-    left_orbital_chart: object = field(default_factory=IGCR2LeftUnitaryChart)
-    middle_orbital_chart: object = field(default_factory=IGCR2LeftUnitaryChart)
-    right_orbital_chart_override: object | None = None
-    real_right_orbital_chart: bool = False
+class IGCR3SpinRestrictedParameterization(IGCRSpinRestrictedParameterization):
+    """Compatibility wrapper for canonical order-3 spin-restricted iGCR."""
+
+    order: int = field(default=3, init=False)
+    right_orbital_chart_override: object | None | str = None
     left_right_ov_relative_scale: float | None = 3.0
 
-    def __post_init__(self):
-        if not (0 <= self.nocc <= self.norb):
-            raise ValueError("nocc must satisfy 0 <= nocc <= norb")
-        if int(self.layers) != self.layers or self.layers < 1:
-            raise ValueError("layers must be a positive integer")
-        object.__setattr__(self, "layers", int(self.layers))
-        _validate_pairs(self.interaction_pairs, self.norb, allow_diagonal=False)
-        _validate_ordered_pairs(self.tau_indices_, self.norb)
-        _validate_triples(self.omega_indices_, self.norb)
-        if self.left_right_ov_relative_scale is not None and (
-            not np.isfinite(float(self.left_right_ov_relative_scale))
-            or self.left_right_ov_relative_scale <= 0
-        ):
-            raise ValueError("left_right_ov_relative_scale must be positive or None")
-
-    @property
-    def pair_indices(self) -> list[tuple[int, int]]:
-        return _validate_pairs(self.interaction_pairs, self.norb, allow_diagonal=False)
-
-    @property
-    def tau_indices(self) -> list[tuple[int, int]]:
-        return _validate_ordered_pairs(self.tau_indices_, self.norb)
-
-    @property
-    def omega_indices(self) -> list[tuple[int, int, int]]:
-        return _validate_triples(self.omega_indices_, self.norb)
-
-    @property
-    def diagonal_chart(self) -> RestrictedCubicChart:
-        return RestrictedCubicChart(
-            norb=self.norb,
-            nocc=self.nocc,
-            interaction_pairs=self.interaction_pairs,
-            tau_indices_=self.tau_indices_,
-            omega_indices_=self.omega_indices_,
-            reduce_cubic_gauge=self.reduce_cubic_gauge,
-        )
-
-    @property
-    def uses_reduced_cubic_chart(self) -> bool:
-        return self.diagonal_chart.uses_reduced_cubic_chart
-
-    @property
-    def cubic_reduction(self) -> IGCR3CubicReduction:
-        return self.diagonal_chart.cubic_reduction
-
-    @property
-    def right_orbital_chart(self):
-        if self.right_orbital_chart_override is not None:
-            return self.right_orbital_chart_override
-        if self.real_right_orbital_chart:
-            return IGCR2RealReferenceOVUnitaryChart(self.nocc, self.norb - self.nocc)
-        return IGCR2ReferenceOVUnitaryChart(self.nocc, self.norb - self.nocc)
-
-    @property
-    def _left_orbital_chart(self):
-        return self.left_orbital_chart
-
-    @property
-    def _middle_orbital_chart(self):
-        return self.middle_orbital_chart
-
-    @property
-    def _right_depends_on_prefix(self) -> bool:
-        return True
-
-    @property
-    def _layered_core(self) -> SpinRestrictedLayeredDiagonalParameterizationCore:
-        return SpinRestrictedLayeredDiagonalParameterizationCore(
-            order=3,
-            norb=self.norb,
-            nocc=self.nocc,
-            layers=self.layers,
-            shared_diagonal=self.shared_diagonal,
-            left_orbital_chart=self._left_orbital_chart,
-            middle_orbital_chart=self._middle_orbital_chart,
-            right_orbital_chart=self.right_orbital_chart,
-            n_diag_params_per_layer=self.diagonal_chart.n_params,
-            diagonal_from_parameters=self._diagonal_from_native_parameters,
-            parameters_from_diagonal=self._native_parameters_from_diagonal,
-            right_depends_on_prefix=self._right_depends_on_prefix,
-            project_final_reference_ov=self.right_orbital_chart_override is None,
-            left_right_ov_transform_scale=self._left_right_ov_transform_scale,
-        )
-
-
-    @property
-    def n_left_orbital_rotation_params(self):
-        return self._layered_core.n_left_orbital_rotation_params
-
-    @property
-    def n_middle_orbital_rotation_params_per_layer(self):
-        return self._layered_core.n_middle_orbital_rotation_params_per_layer
-
-    @property
-    def n_middle_orbital_rotation_params(self):
-        return self._layered_core.n_middle_orbital_rotation_params
-
-    @property
-    def n_double_params(self):
-        return 0
-
-    @property
-    def n_pair_params(self):
-        if self.shared_diagonal:
-            return self.n_pair_params_per_layer
-        return self.layers * self.n_pair_params_per_layer
-
-    @property
-    def n_pair_params_per_layer(self):
-        return self.diagonal_chart.n_pair_params
-
-    @property
-    def n_tau_params(self):
-        if self.shared_diagonal:
-            return self.n_tau_params_per_layer
-        return self.layers * self.n_tau_params_per_layer
-
-    @property
-    def n_tau_params_per_layer(self):
-        return self.diagonal_chart.n_tau_params
-
-    @property
-    def n_omega_params(self):
-        if self.shared_diagonal:
-            return self.n_omega_params_per_layer
-        return self.layers * self.n_omega_params_per_layer
-
-    @property
-    def n_omega_params_per_layer(self):
-        return self.diagonal_chart.n_omega_params
-
-    @property
-    def n_diag_params_per_layer(self):
-        return self._layered_core.n_diag_params_per_layer
-
-    @property
-    def n_right_orbital_rotation_params(self):
-        return self._layered_core.n_right_orbital_rotation_params
-
-    @property
-    def _right_orbital_rotation_start(self):
-        return self._layered_core._right_orbital_rotation_start
-
-    @property
-    def _middle_orbital_rotation_start(self):
-        return self._layered_core._middle_orbital_rotation_start
-
-    @property
-    def _left_right_ov_transform_scale(self):
-        return None
-
-    def _native_parameters_from_public(self, params: np.ndarray) -> np.ndarray:
-        return self._layered_core.native_parameters_from_public(params)
-
-    def _public_parameters_from_native(self, params: np.ndarray) -> np.ndarray:
-        return self._layered_core.public_parameters_from_native(params)
-
-    @property
-    def n_params(self):
-        return self._layered_core.n_params
-
-    def sector_sizes(self) -> dict[str, int]:
-        return {
-            "left": self.n_left_orbital_rotation_params,
-            "double": self.n_double_params,
-            "pair": self.n_pair_params,
-            "tau": 0 if self.uses_reduced_cubic_chart else self.n_tau_params,
-            "omega": self.n_omega_params,
-            "cubic": self.n_tau_params
-            if self.uses_reduced_cubic_chart
-            else (self.n_tau_params + self.n_omega_params),
-            "middle": self.n_middle_orbital_rotation_params,
-            "right": self.n_right_orbital_rotation_params,
-            "total": self.n_params,
-        }
-
-    def _diagonal_from_native_parameters(
-        self,
-        params: np.ndarray,
-    ) -> IGCRDiagonalCoefficients:
-        coeffs = self.diagonal_chart.coefficients_from_parameters(params)
-        return IGCRDiagonalCoefficients.from_igcr3_spec(
-            IGCR3SpinRestrictedSpec(
-                double_params=coeffs.double_params,
-                pair_values=coeffs.pair_values,
-                tau=coeffs.tau,
-                omega_values=coeffs.omega_values,
-            )
-        )
-
     def ansatz_from_parameters(self, params: np.ndarray) -> IGCR3Ansatz | IGCR3LayeredAnsatz:
-        return self._layered_core.ansatz_from_parameters(params).to_legacy()
+        return super().ansatz_from_parameters(params).to_legacy()
 
-    def _native_parameters_from_diagonal(
-        self,
-        diagonal: IGCRDiagonalCoefficients,
-    ) -> tuple[np.ndarray, np.ndarray]:
-        spec = diagonal.to_igcr3_spec()
-        return self.diagonal_chart.parameters_from_coefficients(
-            RestrictedCubicCoefficients(
-                double_params=spec.full_double(),
-                pair_values=np.asarray(spec.pair_values, dtype=np.float64),
-                tau=spec.tau_matrix(),
-                omega_values=spec.omega_vector(),
-            )
-        )
 
-    def parameters_from_ansatz(
-        self,
-        ansatz: IGCRAnsatz | IGCR3Ansatz | IGCR3LayeredAnsatz,
-    ) -> np.ndarray:
-        return self._layered_core.parameters_from_ansatz(ansatz)
-
-    def parameters_from_igcr2_ansatz(
-        self,
-        ansatz: IGCR2Ansatz | IGCR2LayeredAnsatz,
-        *,
-        tau_scale: float = 0.0,
-        omega_scale: float = 0.0,
-    ) -> np.ndarray:
-        return self.parameters_from_ansatz(
-            _igcr3_ansatz_from_igcr2_any(
-                ansatz,
-                tau_scale=tau_scale,
-                omega_scale=omega_scale,
-            )
-        )
-
-    def parameters_from_t_amplitudes(
-        self,
-        t2: np.ndarray,
-        t1: np.ndarray | None = None,
-        **seed_options,
-    ) -> np.ndarray:
-        """Seed iGCR3 from CCSD amplitudes by non-variational state matching.
-
-        ``strategy="ccsd_residual"`` constructs a CCSD target state from
-        ``exp(T1 + T2)|HF>`` truncated at ``target_max_power`` and projects the
-        residual onto this parameterization's tangent space.  No Hamiltonian or
-        energy minimization is used by the initializer.
-        """
-        from xquces.seeds.high_order import igcr3_parameters_from_t_amplitudes
-
-        return igcr3_parameters_from_t_amplitudes(self, t2, t1=t1, **seed_options)
-
-    def parameters_from_ucj_ansatz(
-        self,
-        ansatz: UCJAnsatz,
-        *,
-        tau_scale: float = 0.0,
-        omega_scale: float = 0.0,
-    ) -> np.ndarray:
-        return self.parameters_from_ansatz(
-            IGCR3Ansatz.from_ucj_ansatz(
-                ansatz,
-                self.nocc,
-                tau_scale=tau_scale,
-                omega_scale=omega_scale,
-            )
-        )
-
-    def parameters_from_gcr_ansatz(
-        self,
-        ansatz: GCRAnsatz,
-        *,
-        tau_scale: float = 0.0,
-        omega_scale: float = 0.0,
-    ) -> np.ndarray:
-        return self.parameters_from_ansatz(
-            IGCR3Ansatz.from_gcr_ansatz(
-                ansatz,
-                self.nocc,
-                tau_scale=tau_scale,
-                omega_scale=omega_scale,
-            )
-        )
-
-    def transfer_parameters_from(
-        self,
-        previous_parameters: np.ndarray,
-        previous_parameterization: "IGCR3SpinRestrictedParameterization | None" = None,
-        old_for_new: np.ndarray | None = None,
-        phases: np.ndarray | None = None,
-        orbital_overlap: np.ndarray | None = None,
-        block_diagonal: bool = True,
-    ) -> np.ndarray:
-        if previous_parameterization is None:
-            previous_parameterization = self
-        ansatz = previous_parameterization.ansatz_from_parameters(previous_parameters)
-        if ansatz.nocc != self.nocc:
-            raise ValueError(
-                "previous ansatz nocc does not match this parameterization"
-            )
-        if orbital_overlap is not None:
-            if old_for_new is not None or phases is not None:
-                raise ValueError(
-                    "Pass either orbital_overlap or explicit relabeling, not both."
-                )
-            basis_change = orbital_transport_unitary_from_overlap(
-                orbital_overlap,
-                nocc=self.nocc,
-                block_diagonal=block_diagonal,
-            )
-            if isinstance(ansatz, (IGCR3Ansatz, IGCR3LayeredAnsatz)):
-                ansatz = transport_igcr3_ansatz_orbitals(ansatz, basis_change)
-            elif isinstance(ansatz, (IGCR2Ansatz, IGCR2LayeredAnsatz)):
-                ansatz = transport_igcr2_ansatz_orbitals(ansatz, basis_change)
-            else:
-                raise TypeError(
-                    f"Unsupported ansatz type for transfer: {type(ansatz)!r}"
-                )
-        elif old_for_new is not None:
-            if isinstance(ansatz, (IGCR3Ansatz, IGCR3LayeredAnsatz)):
-                ansatz = relabel_igcr3_ansatz_orbitals(ansatz, old_for_new, phases)
-            elif isinstance(ansatz, (IGCR2Ansatz, IGCR2LayeredAnsatz)):
-                ansatz = relabel_igcr2_ansatz_orbitals(ansatz, old_for_new, phases)
-            else:
-                raise TypeError(
-                    f"Unsupported ansatz type for transfer: {type(ansatz)!r}"
-                )
-        if isinstance(ansatz, (IGCR3Ansatz, IGCR3LayeredAnsatz)):
-            return self.parameters_from_ansatz(ansatz)
-        if isinstance(ansatz, (IGCR2Ansatz, IGCR2LayeredAnsatz)):
-            return self.parameters_from_igcr2_ansatz(ansatz)
-        raise TypeError(f"Unsupported ansatz type for transfer: {type(ansatz)!r}")
-
-    def apply(
-        self,
-        reference: object,
-        nelec: tuple[int, int] | None = None,
-    ):
-        from dataclasses import replace
-
-        from xquces.gcr.charts import GCR2FullUnitaryChart
-        from xquces.gcr.references import (
-            apply_ansatz_parameterization,
-            reference_is_hartree_fock_state,
-        )
-
-        if nelec is None:
-            nelec = (self.nocc, self.nocc)
-        nelec = tuple(int(x) for x in nelec)
-        parameterization = self
-        use_full_right = (
-            self.right_orbital_chart_override is None
-            and not reference_is_hartree_fock_state(reference, self.norb, nelec)
-        )
-        if use_full_right:
-            parameterization = replace(
-                self,
-                right_orbital_chart_override=GCR2FullUnitaryChart(),
-            )
-        return apply_ansatz_parameterization(parameterization, reference, nelec)
-
-    def params_to_vec(
-        self, reference_vec: np.ndarray, nelec: tuple[int, int]
-    ) -> Callable[[np.ndarray], np.ndarray]:
-        reference_vec = np.asarray(reference_vec, dtype=np.complex128)
-
-        def func(params: np.ndarray) -> np.ndarray:
-            return self.ansatz_from_parameters(params).apply(
-                reference_vec, nelec=nelec, copy=True
-            )
-
-        return func
 
 
 def igcr3_from_igcr2_ansatz(
@@ -1340,485 +1499,19 @@ def transport_igcr4_ansatz_orbitals(
     )
 
 
+
 @dataclass(frozen=True)
-class IGCR4SpinRestrictedParameterization:
-    norb: int
-    nocc: int
-    layers: int = 1
-    shared_diagonal: bool = False
-    interaction_pairs: list[tuple[int, int]] | None = None
-    tau_indices_: list[tuple[int, int]] | None = None
-    omega_indices_: list[tuple[int, int, int]] | None = None
-    eta_indices_: list[tuple[int, int]] | None = None
-    rho_indices_: list[tuple[int, int, int]] | None = None
-    sigma_indices_: list[tuple[int, int, int, int]] | None = None
-    reduce_cubic_gauge: bool = True
-    reduce_quartic_gauge: bool = True
-    left_orbital_chart: object = field(default_factory=IGCR2LeftUnitaryChart)
-    middle_orbital_chart: object = field(default_factory=IGCR2LeftUnitaryChart)
-    right_orbital_chart_override: object | None = None
-    real_right_orbital_chart: bool = False
+class IGCR4SpinRestrictedParameterization(IGCRSpinRestrictedParameterization):
+    """Compatibility wrapper for canonical order-4 spin-restricted iGCR."""
+
+    order: int = field(default=4, init=False)
+    right_orbital_chart_override: object | None | str = None
     left_right_ov_relative_scale: float | None = 3.0
 
-    def __post_init__(self):
-        if not (0 <= self.nocc <= self.norb):
-            raise ValueError("nocc must satisfy 0 <= nocc <= norb")
-        if int(self.layers) != self.layers or self.layers < 1:
-            raise ValueError("layers must be a positive integer")
-        object.__setattr__(self, "layers", int(self.layers))
-        _validate_pairs(self.interaction_pairs, self.norb, allow_diagonal=False)
-        _validate_ordered_pairs(self.tau_indices_, self.norb)
-        _validate_triples(self.omega_indices_, self.norb)
-        _validate_pairs(self.eta_indices_, self.norb, allow_diagonal=False)
-        _validate_rho_indices(self.rho_indices_, self.norb)
-        _validate_sigma_indices(self.sigma_indices_, self.norb)
-        if self.left_right_ov_relative_scale is not None and (
-            not np.isfinite(float(self.left_right_ov_relative_scale))
-            or self.left_right_ov_relative_scale <= 0
-        ):
-            raise ValueError("left_right_ov_relative_scale must be positive or None")
-
-    @property
-    def pair_indices(self):
-        return _validate_pairs(self.interaction_pairs, self.norb, allow_diagonal=False)
-
-    @property
-    def tau_indices(self):
-        return _validate_ordered_pairs(self.tau_indices_, self.norb)
-
-    @property
-    def omega_indices(self):
-        return _validate_triples(self.omega_indices_, self.norb)
-
-    @property
-    def eta_indices(self):
-        return _validate_pairs(self.eta_indices_, self.norb, allow_diagonal=False)
-
-    @property
-    def rho_indices(self):
-        return _validate_rho_indices(self.rho_indices_, self.norb)
-
-    @property
-    def sigma_indices(self):
-        return _validate_sigma_indices(self.sigma_indices_, self.norb)
-
-    @property
-    def diagonal_chart(self) -> RestrictedQuarticChart:
-        return RestrictedQuarticChart(
-            norb=self.norb,
-            nocc=self.nocc,
-            interaction_pairs=self.interaction_pairs,
-            tau_indices_=self.tau_indices_,
-            omega_indices_=self.omega_indices_,
-            eta_indices_=self.eta_indices_,
-            rho_indices_=self.rho_indices_,
-            sigma_indices_=self.sigma_indices_,
-            reduce_cubic_gauge=self.reduce_cubic_gauge,
-            reduce_quartic_gauge=self.reduce_quartic_gauge,
-        )
-
-    @property
-    def uses_reduced_cubic_chart(self) -> bool:
-        return self.diagonal_chart.uses_reduced_cubic_chart
-
-    @property
-    def uses_reduced_quartic_chart(self) -> bool:
-        return self.diagonal_chart.uses_reduced_quartic_chart
-
-    @property
-    def cubic_reduction(self) -> IGCR3CubicReduction:
-        return self.diagonal_chart.cubic_reduction
-
-    @property
-    def quartic_reduction(self) -> IGCR4QuarticReduction:
-        return self.diagonal_chart.quartic_reduction
-
-    @property
-    def right_orbital_chart(self):
-        if self.right_orbital_chart_override is not None:
-            return self.right_orbital_chart_override
-        if self.real_right_orbital_chart:
-            return IGCR2RealReferenceOVUnitaryChart(self.nocc, self.norb - self.nocc)
-        return IGCR2ReferenceOVUnitaryChart(self.nocc, self.norb - self.nocc)
-
-    @property
-    def _left_orbital_chart(self):
-        return self.left_orbital_chart
-
-    @property
-    def _middle_orbital_chart(self):
-        return self.middle_orbital_chart
-
-    @property
-    def _right_depends_on_prefix(self) -> bool:
-        return True
-
-    @property
-    def _layered_core(self) -> SpinRestrictedLayeredDiagonalParameterizationCore:
-        return SpinRestrictedLayeredDiagonalParameterizationCore(
-            order=4,
-            norb=self.norb,
-            nocc=self.nocc,
-            layers=self.layers,
-            shared_diagonal=self.shared_diagonal,
-            left_orbital_chart=self._left_orbital_chart,
-            middle_orbital_chart=self._middle_orbital_chart,
-            right_orbital_chart=self.right_orbital_chart,
-            n_diag_params_per_layer=self.diagonal_chart.n_params,
-            diagonal_from_parameters=self._diagonal_from_native_parameters,
-            parameters_from_diagonal=self._native_parameters_from_diagonal,
-            right_depends_on_prefix=self._right_depends_on_prefix,
-            project_final_reference_ov=self.right_orbital_chart_override is None,
-            left_right_ov_transform_scale=self._left_right_ov_transform_scale,
-        )
-
-
-    @property
-    def n_left_orbital_rotation_params(self):
-        return self._layered_core.n_left_orbital_rotation_params
-
-    @property
-    def n_middle_orbital_rotation_params_per_layer(self):
-        return self._layered_core.n_middle_orbital_rotation_params_per_layer
-
-    @property
-    def n_middle_orbital_rotation_params(self):
-        return self._layered_core.n_middle_orbital_rotation_params
-
-    @property
-    def n_pair_params(self):
-        if self.shared_diagonal:
-            return self.n_pair_params_per_layer
-        return self.layers * self.n_pair_params_per_layer
-
-    @property
-    def n_pair_params_per_layer(self):
-        return self.diagonal_chart.n_pair_params
-
-    @property
-    def n_tau_params(self):
-        if self.shared_diagonal:
-            return self.n_tau_params_per_layer
-        return self.layers * self.n_tau_params_per_layer
-
-    @property
-    def n_tau_params_per_layer(self):
-        return self.diagonal_chart.n_tau_params
-
-    @property
-    def n_omega_params(self):
-        if self.shared_diagonal:
-            return self.n_omega_params_per_layer
-        return self.layers * self.n_omega_params_per_layer
-
-    @property
-    def n_omega_params_per_layer(self):
-        return self.diagonal_chart.n_omega_params
-
-    @property
-    def n_eta_params(self):
-        if self.shared_diagonal:
-            return self.n_eta_params_per_layer
-        return self.layers * self.n_eta_params_per_layer
-
-    @property
-    def n_eta_params_per_layer(self):
-        return self.diagonal_chart.n_eta_params
-
-    @property
-    def n_rho_params(self):
-        if self.shared_diagonal:
-            return self.n_rho_params_per_layer
-        return self.layers * self.n_rho_params_per_layer
-
-    @property
-    def n_rho_params_per_layer(self):
-        return self.diagonal_chart.n_rho_params
-
-    @property
-    def n_sigma_params(self):
-        if self.shared_diagonal:
-            return self.n_sigma_params_per_layer
-        return self.layers * self.n_sigma_params_per_layer
-
-    @property
-    def n_sigma_params_per_layer(self):
-        return self.diagonal_chart.n_sigma_params
-
-    @property
-    def n_diag_params_per_layer(self):
-        return self._layered_core.n_diag_params_per_layer
-
-    @property
-    def n_right_orbital_rotation_params(self):
-        return self._layered_core.n_right_orbital_rotation_params
-
-    @property
-    def _right_orbital_rotation_start(self):
-        return self._layered_core._right_orbital_rotation_start
-
-    @property
-    def _middle_orbital_rotation_start(self):
-        return self._layered_core._middle_orbital_rotation_start
-
-    @property
-    def _left_right_ov_transform_scale(self):
-        return None
-
-    def _native_parameters_from_public(self, params: np.ndarray) -> np.ndarray:
-        return self._layered_core.native_parameters_from_public(params)
-
-    def _public_parameters_from_native(self, params: np.ndarray) -> np.ndarray:
-        return self._layered_core.public_parameters_from_native(params)
-
-    @property
-    def n_params(self):
-        return self._layered_core.n_params
-
-    def sector_sizes(self) -> dict[str, int]:
-        return {
-            "left": self.n_left_orbital_rotation_params,
-            "pair": self.n_pair_params,
-            "tau": 0 if self.uses_reduced_cubic_chart else self.n_tau_params,
-            "omega": self.n_omega_params,
-            "eta": 0 if self.uses_reduced_quartic_chart else self.n_eta_params,
-            "rho": self.n_rho_params,
-            "sigma": 0 if self.uses_reduced_quartic_chart else self.n_sigma_params,
-            "middle": self.n_middle_orbital_rotation_params,
-            "right": self.n_right_orbital_rotation_params,
-            "total": self.n_params,
-        }
-
-    def _diagonal_from_native_parameters(
-        self,
-        params: np.ndarray,
-    ) -> IGCRDiagonalCoefficients:
-        coeffs = self.diagonal_chart.coefficients_from_parameters(params)
-        return IGCRDiagonalCoefficients.from_igcr4_spec(
-            IGCR4SpinRestrictedSpec(
-                double_params=coeffs.double_params,
-                pair_values=coeffs.pair_values,
-                tau=coeffs.tau,
-                omega_values=coeffs.omega_values,
-                eta_values=coeffs.eta_values,
-                rho_values=coeffs.rho_values,
-                sigma_values=coeffs.sigma_values,
-            )
-        )
-
     def ansatz_from_parameters(self, params: np.ndarray) -> IGCR4Ansatz | IGCR4LayeredAnsatz:
-        return self._layered_core.ansatz_from_parameters(params).to_legacy()
+        return super().ansatz_from_parameters(params).to_legacy()
 
-    def _native_parameters_from_diagonal(
-        self,
-        diagonal: IGCRDiagonalCoefficients,
-    ) -> tuple[np.ndarray, np.ndarray]:
-        spec = diagonal.to_igcr4_spec()
-        return self.diagonal_chart.parameters_from_coefficients(
-            RestrictedQuarticCoefficients(
-                double_params=spec.full_double(),
-                pair_values=np.asarray(spec.pair_values, dtype=np.float64),
-                tau=spec.tau_matrix(),
-                omega_values=spec.omega_vector(),
-                eta_values=spec.eta_vector(),
-                rho_values=spec.rho_vector(),
-                sigma_values=spec.sigma_vector(),
-            )
-        )
 
-    def parameters_from_ansatz(
-        self,
-        ansatz: IGCRAnsatz | IGCR4Ansatz | IGCR4LayeredAnsatz,
-    ) -> np.ndarray:
-        return self._layered_core.parameters_from_ansatz(ansatz)
-
-    def parameters_from_igcr3_ansatz(
-        self,
-        ansatz: IGCR3Ansatz | IGCR3LayeredAnsatz,
-        *,
-        eta_scale: float = 0.0,
-        rho_scale: float = 0.0,
-        sigma_scale: float = 0.0,
-    ) -> np.ndarray:
-        return self.parameters_from_ansatz(
-            _igcr4_ansatz_from_igcr3_any(
-                ansatz,
-                eta_scale=eta_scale,
-                rho_scale=rho_scale,
-                sigma_scale=sigma_scale,
-            )
-        )
-
-    def parameters_from_igcr2_ansatz(
-        self,
-        ansatz: IGCR2Ansatz | IGCR2LayeredAnsatz,
-        *,
-        tau_scale: float = 0.0,
-        omega_scale: float = 0.0,
-        eta_scale: float = 0.0,
-        rho_scale: float = 0.0,
-        sigma_scale: float = 0.0,
-    ) -> np.ndarray:
-        return self.parameters_from_ansatz(
-            _igcr4_ansatz_from_igcr2_any(
-                ansatz,
-                tau_scale=tau_scale,
-                omega_scale=omega_scale,
-                eta_scale=eta_scale,
-                rho_scale=rho_scale,
-                sigma_scale=sigma_scale,
-            )
-        )
-
-    def parameters_from_t_amplitudes(
-        self,
-        t2: np.ndarray,
-        t1: np.ndarray | None = None,
-        **seed_options,
-    ) -> np.ndarray:
-        """Seed iGCR4 from CCSD amplitudes by non-variational state matching."""
-        from xquces.seeds.high_order import igcr4_parameters_from_t_amplitudes
-
-        return igcr4_parameters_from_t_amplitudes(self, t2, t1=t1, **seed_options)
-
-    def parameters_from_ucj_ansatz(
-        self,
-        ansatz: UCJAnsatz,
-        *,
-        tau_scale: float = 0.0,
-        omega_scale: float = 0.0,
-        eta_scale: float = 0.0,
-        rho_scale: float = 0.0,
-        sigma_scale: float = 0.0,
-    ) -> np.ndarray:
-        return self.parameters_from_ansatz(
-            IGCR4Ansatz.from_ucj_ansatz(
-                ansatz,
-                self.nocc,
-                tau_scale=tau_scale,
-                omega_scale=omega_scale,
-                eta_scale=eta_scale,
-                rho_scale=rho_scale,
-                sigma_scale=sigma_scale,
-            )
-        )
-
-    def parameters_from_gcr_ansatz(
-        self,
-        ansatz: GCRAnsatz,
-        *,
-        tau_scale: float = 0.0,
-        omega_scale: float = 0.0,
-        eta_scale: float = 0.0,
-        rho_scale: float = 0.0,
-        sigma_scale: float = 0.0,
-    ) -> np.ndarray:
-        return self.parameters_from_ansatz(
-            IGCR4Ansatz.from_gcr_ansatz(
-                ansatz,
-                self.nocc,
-                tau_scale=tau_scale,
-                omega_scale=omega_scale,
-                eta_scale=eta_scale,
-                rho_scale=rho_scale,
-                sigma_scale=sigma_scale,
-            )
-        )
-
-    def transfer_parameters_from(
-        self,
-        previous_parameters: np.ndarray,
-        previous_parameterization: "IGCR4SpinRestrictedParameterization | None" = None,
-        old_for_new: np.ndarray | None = None,
-        phases: np.ndarray | None = None,
-        orbital_overlap: np.ndarray | None = None,
-        block_diagonal: bool = True,
-    ) -> np.ndarray:
-        if previous_parameterization is None:
-            previous_parameterization = self
-        ansatz = previous_parameterization.ansatz_from_parameters(previous_parameters)
-        if ansatz.nocc != self.nocc:
-            raise ValueError(
-                "previous ansatz nocc does not match this parameterization"
-            )
-        if orbital_overlap is not None:
-            if old_for_new is not None or phases is not None:
-                raise ValueError(
-                    "Pass either orbital_overlap or explicit relabeling, not both."
-                )
-            basis_change = orbital_transport_unitary_from_overlap(
-                orbital_overlap,
-                nocc=self.nocc,
-                block_diagonal=block_diagonal,
-            )
-            if isinstance(ansatz, (IGCR4Ansatz, IGCR4LayeredAnsatz)):
-                ansatz = transport_igcr4_ansatz_orbitals(ansatz, basis_change)
-            elif isinstance(ansatz, (IGCR3Ansatz, IGCR3LayeredAnsatz)):
-                ansatz = transport_igcr3_ansatz_orbitals(ansatz, basis_change)
-            elif isinstance(ansatz, (IGCR2Ansatz, IGCR2LayeredAnsatz)):
-                ansatz = transport_igcr2_ansatz_orbitals(ansatz, basis_change)
-            else:
-                raise TypeError(
-                    f"Unsupported ansatz type for transfer: {type(ansatz)!r}"
-                )
-        elif old_for_new is not None:
-            if isinstance(ansatz, (IGCR4Ansatz, IGCR4LayeredAnsatz)):
-                ansatz = relabel_igcr4_ansatz_orbitals(ansatz, old_for_new, phases)
-            elif isinstance(ansatz, (IGCR3Ansatz, IGCR3LayeredAnsatz)):
-                ansatz = relabel_igcr3_ansatz_orbitals(ansatz, old_for_new, phases)
-            elif isinstance(ansatz, (IGCR2Ansatz, IGCR2LayeredAnsatz)):
-                ansatz = relabel_igcr2_ansatz_orbitals(ansatz, old_for_new, phases)
-            else:
-                raise TypeError(
-                    f"Unsupported ansatz type for transfer: {type(ansatz)!r}"
-                )
-        if isinstance(ansatz, (IGCR4Ansatz, IGCR4LayeredAnsatz)):
-            return self.parameters_from_ansatz(ansatz)
-        if isinstance(ansatz, (IGCR3Ansatz, IGCR3LayeredAnsatz)):
-            return self.parameters_from_igcr3_ansatz(ansatz)
-        if isinstance(ansatz, (IGCR2Ansatz, IGCR2LayeredAnsatz)):
-            return self.parameters_from_igcr2_ansatz(ansatz)
-        raise TypeError(f"Unsupported ansatz type for transfer: {type(ansatz)!r}")
-
-    def apply(
-        self,
-        reference: object,
-        nelec: tuple[int, int] | None = None,
-    ):
-        from dataclasses import replace
-
-        from xquces.gcr.charts import GCR2FullUnitaryChart
-        from xquces.gcr.references import (
-            apply_ansatz_parameterization,
-            reference_is_hartree_fock_state,
-        )
-
-        if nelec is None:
-            nelec = (self.nocc, self.nocc)
-        nelec = tuple(int(x) for x in nelec)
-        parameterization = self
-        use_full_right = (
-            self.right_orbital_chart_override is None
-            and not reference_is_hartree_fock_state(reference, self.norb, nelec)
-        )
-        if use_full_right:
-            parameterization = replace(
-                self,
-                right_orbital_chart_override=GCR2FullUnitaryChart(),
-            )
-        return apply_ansatz_parameterization(parameterization, reference, nelec)
-
-    def params_to_vec(
-        self, reference_vec: np.ndarray, nelec: tuple[int, int]
-    ) -> Callable[[np.ndarray], np.ndarray]:
-        reference_vec = np.asarray(reference_vec, dtype=np.complex128)
-
-        def func(params: np.ndarray) -> np.ndarray:
-            return self.ansatz_from_parameters(params).apply(
-                reference_vec, nelec=nelec, copy=True
-            )
-
-        return func
 
 
 def igcr4_from_igcr3_ansatz(
@@ -2037,187 +1730,8 @@ def parameters_from_t2(
     )
 
 
-_AUTO_RIGHT_CHART = "auto"
 
 
-@dataclass(frozen=True)
-class IGCRSpinRestrictedParameterization:
-    """Order-selecting facade for spin-restricted iGCR ansatz parameterizations."""
-
-    norb: int
-    nocc: int
-    order: int = 2
-    layers: int = 1
-    shared_diagonal: bool = False
-    interaction_pairs: list[tuple[int, int]] | None = None
-    tau_indices_: list[tuple[int, int]] | None = None
-    omega_indices_: list[tuple[int, int, int]] | None = None
-    eta_indices_: list[tuple[int, int]] | None = None
-    rho_indices_: list[tuple[int, int, int]] | None = None
-    sigma_indices_: list[tuple[int, int, int, int]] | None = None
-    reduce_cubic_gauge: bool = True
-    reduce_quartic_gauge: bool = True
-    left_orbital_chart: object = field(default_factory=IGCR2LeftUnitaryChart)
-    middle_orbital_chart: object = field(default_factory=IGCR2LeftUnitaryChart)
-    right_orbital_chart_override: object | None | str = _AUTO_RIGHT_CHART
-    real_right_orbital_chart: bool = False
-    left_right_ov_relative_scale: float | None = None
-
-    def __post_init__(self):
-        if self.order not in {2, 3, 4}:
-            raise ValueError("order must be 2, 3, or 4")
-        if int(self.layers) != self.layers or self.layers < 1:
-            raise ValueError("layers must be a positive integer")
-        object.__setattr__(self, "layers", int(self.layers))
-
-    @property
-    def implementation(self):
-        return self._implementation(full_right=False)
-
-    def _implementation(self, *, full_right: bool):
-        right_chart = self.right_orbital_chart_override
-        if isinstance(right_chart, str) and right_chart == _AUTO_RIGHT_CHART:
-            right_chart = IGCR2LeftUnitaryChart() if full_right else None
-
-        common = {
-            "norb": self.norb,
-            "nocc": self.nocc,
-            "interaction_pairs": self.interaction_pairs,
-            "left_orbital_chart": self.left_orbital_chart,
-            "right_orbital_chart_override": right_chart,
-            "real_right_orbital_chart": self.real_right_orbital_chart,
-            "left_right_ov_relative_scale": self.left_right_ov_relative_scale,
-        }
-        if self.order == 2:
-            return IGCR2SpinRestrictedParameterization(
-                **common,
-                layers=self.layers,
-                shared_diagonal=self.shared_diagonal,
-                middle_orbital_chart=self.middle_orbital_chart,
-            )
-        if self.order == 3:
-            return IGCR3SpinRestrictedParameterization(
-                **common,
-                layers=self.layers,
-                shared_diagonal=self.shared_diagonal,
-                middle_orbital_chart=self.middle_orbital_chart,
-                tau_indices_=self.tau_indices_,
-                omega_indices_=self.omega_indices_,
-                reduce_cubic_gauge=self.reduce_cubic_gauge,
-            )
-        return IGCR4SpinRestrictedParameterization(
-            **common,
-            layers=self.layers,
-            shared_diagonal=self.shared_diagonal,
-            middle_orbital_chart=self.middle_orbital_chart,
-            tau_indices_=self.tau_indices_,
-            omega_indices_=self.omega_indices_,
-            eta_indices_=self.eta_indices_,
-            rho_indices_=self.rho_indices_,
-            sigma_indices_=self.sigma_indices_,
-            reduce_cubic_gauge=self.reduce_cubic_gauge,
-            reduce_quartic_gauge=self.reduce_quartic_gauge,
-        )
-
-    def _uses_full_right_for_reference(
-        self,
-        reference: object,
-        nelec: tuple[int, int],
-    ) -> bool:
-        from xquces.gcr.references import reference_is_hartree_fock_state
-
-        if not (
-            isinstance(self.right_orbital_chart_override, str)
-            and self.right_orbital_chart_override == _AUTO_RIGHT_CHART
-        ):
-            return False
-        return not reference_is_hartree_fock_state(reference, self.norb, nelec)
-
-    def apply(
-        self,
-        reference: object,
-        nelec: tuple[int, int] | None = None,
-    ):
-        if nelec is None:
-            nelec = (self.nocc, self.nocc)
-        nelec = tuple(int(x) for x in nelec)
-        from xquces.gcr.references import apply_ansatz_parameterization
-
-        parameterization = self._implementation(
-            full_right=self._uses_full_right_for_reference(reference, nelec)
-        )
-        return apply_ansatz_parameterization(parameterization, reference, nelec)
-
-    def params_to_vec(
-        self, reference_vec: np.ndarray, nelec: tuple[int, int] | None = None
-    ):
-        return self.apply(reference_vec, nelec).params_to_vec()
-
-    def circuit(
-        self,
-        reference: object | None = None,
-        nelec: tuple[int, int] | None = None,
-        *,
-        frozen_blocks: tuple[str, ...] | list[str] | set[str] = (),
-        base_parameters: np.ndarray | None = None,
-    ) -> IGCRVariationalCircuit:
-        if nelec is None and reference is not None:
-            nelec = (self.nocc, self.nocc)
-        full_right = (
-            False
-            if reference is None or nelec is None
-            else self._uses_full_right_for_reference(reference, tuple(nelec))
-        )
-        return IGCRVariationalCircuit(
-            parameterization=self._implementation(full_right=full_right),
-            reference=reference,
-            nelec=None if nelec is None else tuple(int(x) for x in nelec),
-            frozen_blocks=tuple(frozen_blocks),
-            base_parameters=base_parameters,
-        )
-
-    def parameter_blocks(
-        self,
-        *,
-        frozen: tuple[str, ...] | list[str] | set[str] = (),
-    ) -> tuple[GCRParameterBlock, ...]:
-        return parameter_blocks(self.implementation, frozen=frozen)
-
-    def parameter_view(self, params: np.ndarray, *, copy: bool = False) -> ParameterView:
-        return parameter_view(self.implementation, params, copy=copy)
-
-    def random_parameters(
-        self,
-        scale: float = 1e-3,
-        *,
-        seed: int | np.random.Generator | None = None,
-        blocks: tuple[str, ...] | list[str] | set[str] | None = None,
-    ) -> np.ndarray:
-        return random_parameters(
-            self.implementation,
-            scale=scale,
-            seed=seed,
-            blocks=blocks,
-        )
-
-    def parameters_from_t2(
-        self,
-        t2: np.ndarray,
-        *,
-        source_order: int | None = None,
-        **kwargs,
-    ) -> np.ndarray:
-        from xquces.seeds.dispatch import parameters_from_t2 as dispatch_parameters_from_t2
-
-        return dispatch_parameters_from_t2(
-            self.implementation,
-            t2,
-            source_order=source_order,
-            **kwargs,
-        )
-
-    def __getattr__(self, name: str):
-        return getattr(self.implementation, name)
 
 __all__ = [
     "GCR2FullUnitaryChart",

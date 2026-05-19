@@ -198,7 +198,7 @@ def test_restricted_cubic_chart_roundtrips_igcr3_diagonal_block():
 
 
 def test_restricted_quartic_chart_roundtrips_igcr4_diagonal_block():
-    parameterization = IGCR(order=4, norb=4, nocc=2).implementation
+    parameterization = IGCR(order=4, norb=4, nocc=2)
     chart = parameterization.diagonal_chart
     assert isinstance(chart, RestrictedQuarticChart)
 
@@ -315,7 +315,7 @@ def test_igcr_sequence_backend_matches_legacy_one_layer_blocks_and_state():
     reference = hartree_fock_state(4, (2, 2))
     rng = np.random.default_rng(1234)
     for order in (2, 3, 4):
-        legacy = IGCR(order=order, norb=4, nocc=2).implementation
+        legacy = IGCR(order=order, norb=4, nocc=2)
         sequence = IGCR(order=order, norb=4, nocc=2, backend="sequence")
         zero_params = np.zeros(legacy.n_params, dtype=np.float64)
         random_params = rng.normal(scale=1.0e-3, size=legacy.n_params)
@@ -367,7 +367,7 @@ def test_igcr_sequence_backend_parameters_from_ansatz_matches_legacy_gauge():
     rng = np.random.default_rng(5678)
 
     for order in (2, 3, 4):
-        legacy = IGCR(order=order, norb=4, nocc=2).implementation
+        legacy = IGCR(order=order, norb=4, nocc=2)
         sequence = IGCR(order=order, norb=4, nocc=2, backend="sequence")
         params = rng.normal(scale=1.0e-3, size=sequence.n_params)
 
@@ -431,7 +431,7 @@ def test_ansatz_blocks_preserve_legacy_igcr_block_metadata():
     }
 
     for order, metadata in expected.items():
-        parameterization = IGCR(order=order, norb=4, nocc=2).implementation
+        parameterization = IGCR(order=order, norb=4, nocc=2)
 
         assert _block_metadata(ansatz_parameter_blocks(parameterization)) == metadata
         assert _block_metadata(parameter_blocks(parameterization)) == metadata
@@ -482,7 +482,7 @@ def test_block_compatibility_imports_delegate_to_ansatz_blocks():
     import xquces.gcr as gcr
     import xquces.gcr.igcr as igcr
 
-    parameterization = IGCR(order=4, norb=4, nocc=2).implementation
+    parameterization = IGCR(order=4, norb=4, nocc=2)
 
     assert igcr.GCRParameterBlock is ParameterBlock
     assert _block_metadata(igcr.parameter_blocks(parameterization)) == _block_metadata(
@@ -501,7 +501,7 @@ def test_block_compatibility_imports_delegate_to_ansatz_blocks():
 
 def test_ansatz_parameter_view_works_for_legacy_and_sequence_backends():
     for parameterization in (
-        IGCR(order=3, norb=4, nocc=2).implementation,
+        IGCR(order=3, norb=4, nocc=2),
         IGCR(order=3, norb=4, nocc=2, backend="sequence"),
     ):
         params = np.arange(parameterization.n_params, dtype=np.float64)
@@ -514,7 +514,7 @@ def test_ansatz_parameter_view_works_for_legacy_and_sequence_backends():
 
 def test_ansatz_random_parameters_can_target_named_blocks():
     for parameterization, kept_name in (
-        (IGCR(order=4, norb=4, nocc=2).implementation, "quartic"),
+        (IGCR(order=4, norb=4, nocc=2), "quartic"),
         (IGCR(order=4, norb=4, nocc=2, backend="sequence"), "diagonal.quartic"),
     ):
         params = ansatz_random_parameters(

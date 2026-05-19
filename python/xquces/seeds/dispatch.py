@@ -84,6 +84,12 @@ def parameters_from_t2(
             order = 3
         else:
             order = 2
+    if (
+        hasattr(target, "parameters_from_t_amplitudes")
+        and int(getattr(target, "order", order)) == order
+    ):
+        t1 = kwargs.pop("t1", None)
+        return target.parameters_from_t_amplitudes(t2, t1=t1, **kwargs)
     if order == 2:
         if isinstance(target, IGCR2SpinRestrictedParameterization):
             t1 = kwargs.pop("t1", None)

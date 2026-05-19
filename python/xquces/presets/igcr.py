@@ -92,7 +92,7 @@ def IGCR(
             real_right_orbital_chart=real_right_orbital_chart,
             backend="legacy",
             **kwargs,
-        ).implementation
+        )
         return _igcr_spin_restricted_gate_sequence(order, legacy)
 
     options = {

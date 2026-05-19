@@ -59,7 +59,7 @@ def test_embed_ansatz_parameters_matches_legacy_wrapper_for_lower_order_lift():
 def test_embed_ansatz_parameters_uses_sequence_inverter_owner_for_lifts():
     source = IGCR2SpinRestrictedParameterization(norb=4, nocc=2)
     sequence = IGCR(order=3, norb=4, nocc=2, backend="sequence")
-    legacy_target = IGCR(order=3, norb=4, nocc=2).implementation
+    legacy_target = IGCR(order=3, norb=4, nocc=2)
     params = np.linspace(-1.0e-3, 1.0e-3, source.n_params)
     ansatz = source.ansatz_from_parameters(params)
 

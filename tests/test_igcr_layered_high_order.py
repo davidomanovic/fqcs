@@ -116,6 +116,5 @@ def test_order_selecting_facade_accepts_high_order_layers():
             layers=2,
             shared_diagonal=True,
         )
-        impl = param.implementation
-        assert impl.layers == 2
-        assert impl.shared_diagonal
+        assert param.layers == 2
+        assert param.shared_diagonal
