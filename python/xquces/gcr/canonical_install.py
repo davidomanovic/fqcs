@@ -20,6 +20,27 @@ def install_igcr_parameterization_adapters() -> None:
 
     from xquces.gcr import igcr as legacy_igcr
 
+    def _igcr2_one_layer_ansatz_from_core(self, diagonal, left, right):
+        generic = IGCRAnsatz(
+            order=2,
+            diagonals=(IGCRDiagonalCoefficients.from_igcr2_spec(diagonal),),
+            rotations=(left, right),
+            nocc=self.nocc,
+        )
+        return generic.to_igcr2_ansatz()
+
+    def _igcr2_layered_ansatz_from_core(self, diagonals, rotations):
+        generic = IGCRAnsatz(
+            order=2,
+            diagonals=tuple(
+                IGCRDiagonalCoefficients.from_igcr2_spec(diagonal)
+                for diagonal in diagonals
+            ),
+            rotations=rotations,
+            nocc=self.nocc,
+        )
+        return generic.to_igcr2_ansatz()
+
     def _igcr3_one_layer_ansatz_from_core(self, diagonal, left, right):
         generic = IGCRAnsatz(
             order=3,
@@ -62,6 +83,12 @@ def install_igcr_parameterization_adapters() -> None:
         )
         return generic.to_igcr4_ansatz()
 
+    legacy_igcr.IGCR2SpinRestrictedParameterization._one_layer_ansatz_from_core = (
+        _igcr2_one_layer_ansatz_from_core
+    )
+    legacy_igcr.IGCR2SpinRestrictedParameterization._layered_ansatz_from_core = (
+        _igcr2_layered_ansatz_from_core
+    )
     legacy_igcr.IGCR3SpinRestrictedParameterization._one_layer_ansatz_from_core = (
         _igcr3_one_layer_ansatz_from_core
     )
