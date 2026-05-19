@@ -5,20 +5,32 @@ from xquces.gcr.canonical import (
     IGCRDiagonalCoefficients,
     install_igcr_legacy_adapters,
 )
+from xquces.gcr.canonical_layering import as_legacy_layered_igcr_ansatz
 
 
 def install_igcr_parameterization_adapters() -> None:
     """Install compatibility adapters for the canonical iGCR model.
 
-    Legacy ansatz classes gain ``to_generic``/``from_generic`` adapters, and the
-    routed spin-restricted parameterization core builders construct the
-    canonical always-layered model internally before returning the legacy
-    compatibility object expected by existing callers.
+    Legacy ansatz classes gain ``to_generic``/``from_generic`` adapters.  The
+    spin-restricted parameterization builders and ansatz-embedding callbacks now
+    route through the canonical always-layered model before returning the legacy
+    compatibility objects expected by existing callers.
     """
 
     install_igcr_legacy_adapters()
 
     from xquces.gcr import igcr as legacy_igcr
+
+    def _as_layered_igcr2_spin_restricted_ansatz(ansatz, layers):
+        if getattr(ansatz, "is_spin_restricted", True) is False:
+            raise TypeError("expected a spin-restricted ansatz")
+        return as_legacy_layered_igcr_ansatz(ansatz, layers, order=2)
+
+    def _as_layered_igcr3_spin_restricted_ansatz(ansatz, layers):
+        return as_legacy_layered_igcr_ansatz(ansatz, layers, order=3)
+
+    def _as_layered_igcr4_spin_restricted_ansatz(ansatz, layers):
+        return as_legacy_layered_igcr_ansatz(ansatz, layers, order=4)
 
     def _igcr2_one_layer_ansatz_from_core(self, diagonal, left, right):
         generic = IGCRAnsatz(
@@ -83,6 +95,15 @@ def install_igcr_parameterization_adapters() -> None:
         )
         return generic.to_igcr4_ansatz()
 
+    legacy_igcr._as_layered_igcr2_spin_restricted_ansatz = (
+        _as_layered_igcr2_spin_restricted_ansatz
+    )
+    legacy_igcr._as_layered_igcr3_spin_restricted_ansatz = (
+        _as_layered_igcr3_spin_restricted_ansatz
+    )
+    legacy_igcr._as_layered_igcr4_spin_restricted_ansatz = (
+        _as_layered_igcr4_spin_restricted_ansatz
+    )
     legacy_igcr.IGCR2SpinRestrictedParameterization._one_layer_ansatz_from_core = (
         _igcr2_one_layer_ansatz_from_core
     )
