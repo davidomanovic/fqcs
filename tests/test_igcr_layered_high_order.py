@@ -34,6 +34,26 @@ def test_high_order_layered_embedding_preserves_state():
         assert np.linalg.norm(actual - expected) < 1e-12
 
 
+def test_igcr3_shared_diagonal_layered_roundtrip_preserves_state():
+    rng = np.random.default_rng(2468)
+    ref = ffsim.hartree_fock_state(4, (2, 2))
+    param = IGCR3SpinRestrictedParameterization(
+        norb=4,
+        nocc=2,
+        layers=2,
+        shared_diagonal=True,
+    )
+    params = rng.normal(scale=1e-3, size=param.n_params)
+
+    ansatz = param.ansatz_from_parameters(params)
+    roundtrip = param.parameters_from_ansatz(ansatz)
+    actual = param.ansatz_from_parameters(roundtrip).apply(ref, (2, 2), copy=True)
+    expected = ansatz.apply(ref, (2, 2), copy=True)
+
+    assert isinstance(ansatz, IGCR3LayeredAnsatz)
+    assert np.linalg.norm(actual - expected) < 1e-12
+
+
 def test_high_order_layered_jacobian_matches_finite_difference():
     rng = np.random.default_rng(5678)
     ref = ffsim.hartree_fock_state(4, (2, 2))
