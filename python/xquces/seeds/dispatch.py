@@ -10,7 +10,7 @@ def _embedding_target(parameterization: object) -> object:
 
 
 def embed_ansatz_parameters(parameterization: object, ansatz: object) -> np.ndarray:
-    from xquces.gcr.igcr import (
+    from xquces.gcr.restricted_model import (
         IGCR2Ansatz,
         IGCR2LayeredAnsatz,
         IGCR3Ansatz,
@@ -63,13 +63,11 @@ def parameters_from_t2(
     **kwargs,
 ) -> np.ndarray:
     from xquces.gcr.igcr import (
-        IGCR2Ansatz,
         IGCR2SpinRestrictedParameterization,
-        IGCR3Ansatz,
         IGCR3SpinRestrictedParameterization,
-        IGCR4Ansatz,
         IGCR4SpinRestrictedParameterization,
     )
+    from xquces.gcr.restricted_model import IGCR2Ansatz, IGCR3Ansatz, IGCR4Ansatz
 
     target = getattr(parameterization, "implementation", parameterization)
     order = int(

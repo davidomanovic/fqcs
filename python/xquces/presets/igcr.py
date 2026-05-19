@@ -9,15 +9,17 @@ from xquces.ansatz import (
 )
 from xquces.gcr.charts import GCR2TraceFixedFullUnitaryChart
 from xquces.gcr.igcr import (
-    IGCR2Ansatz,
     IGCR2SpinBalancedParameterization,
+    IGCRSpinRestrictedParameterization,
+    _right_unitary_from_left_and_final,
+)
+from xquces.gcr.restricted_model import (
+    IGCR2Ansatz,
     IGCR2SpinRestrictedSpec,
     IGCR3Ansatz,
     IGCR3SpinRestrictedSpec,
     IGCR4Ansatz,
     IGCR4SpinRestrictedSpec,
-    IGCRSpinRestrictedParameterization,
-    _right_unitary_from_left_and_final,
 )
 from xquces.gcr.product_pair_uccd import (
     PairUCCDStateParameterization,

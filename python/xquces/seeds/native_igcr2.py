@@ -160,7 +160,7 @@ def native_igcr2_seed_from_ccsd_t_amplitudes(
     hamiltonian: object | None = None,
     verbose: bool = False,
 ):
-    from xquces.gcr.igcr import IGCR2Ansatz, IGCR2SpinRestrictedSpec
+    from xquces.gcr.restricted_model import IGCR2Ansatz, IGCR2SpinRestrictedSpec
 
     if parameterization.layers != 1:
         raise ValueError("native iGCR2 t-amplitude seed is implemented for one layer")

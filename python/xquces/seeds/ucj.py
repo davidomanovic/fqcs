@@ -3,14 +3,16 @@ from __future__ import annotations
 import ffsim
 import numpy as np
 
-from xquces.gcr.igcr import (
+from xquces.gcr.restricted_model import (
     IGCR2Ansatz,
     IGCR2LayeredAnsatz,
     IGCR2SpinRestrictedSpec,
+    reduce_spin_restricted,
+)
+from xquces.gcr.utils import (
     _diag_unitary,
     _restricted_left_phase_vector,
     exact_reference_ov_unitary,
-    reduce_spin_restricted,
 )
 from xquces.ucj.model import SpinRestrictedSpec, UCJAnsatz, UCJLayer
 
