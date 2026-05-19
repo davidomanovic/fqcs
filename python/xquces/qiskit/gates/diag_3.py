@@ -26,7 +26,7 @@ from xquces.qiskit.gates.phase_polynomial import (
 )
 
 
-_DIAGONAL_SYNTHESIS_MODES = frozenset({"naive", "phase_polynomial"})
+_DIAGONAL_SYNTHESIS_MODES = frozenset({"naive", "phase_polynomial", "parity_network"})
 
 
 def _validate_diagonal_synthesis(synthesis: str) -> str:
@@ -73,16 +73,7 @@ def _yield_number_product_phase(
 
 
 class Diag3SpinRestrictedJW(Gate):
-    """Spin-restricted iGCR-3 diagonal operator in Jordan-Wigner form.
-
-    The quadratic ``D_p`` and ``N_p N_q`` sectors are emitted by the existing
-    iGCR-2 restricted diagonal gate.  The cubic sectors are exact number-product
-    phase gadgets:
-
-    - ``D_p N_q`` -> two three-qubit phases
-      ``n_pa n_pb n_qa`` and ``n_pa n_pb n_qb``.
-    - ``N_p N_q N_r`` -> eight three-qubit phases, one for each spin choice.
-    """
+    """Spin-restricted iGCR-3 diagonal operator in Jordan-Wigner form."""
 
     def __init__(
         self,
@@ -156,7 +147,7 @@ def _diag3_spin_restricted_jw(
     synthesis = _validate_diagonal_synthesis(synthesis)
     threshold = _validate_threshold(threshold)
 
-    if synthesis == "phase_polynomial":
+    if synthesis in {"phase_polynomial", "parity_network"}:
         coeffs: dict[tuple[int, ...], float] = {}
         add_spin_restricted_diag2_number_products(
             coeffs,
@@ -173,7 +164,12 @@ def _diag3_spin_restricted_jw(
             time=time,
         )
         yield CircuitInstruction(
-            PhasePolynomialJW(coeffs, 2 * norb, threshold=threshold),
+            PhasePolynomialJW(
+                coeffs,
+                2 * norb,
+                threshold=threshold,
+                synthesis="parity_network" if synthesis == "parity_network" else "parity_gadgets",
+            ),
             tuple(qubits),
         )
         return

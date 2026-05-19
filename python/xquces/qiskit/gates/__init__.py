@@ -29,6 +29,7 @@ from xquces.qiskit.gates.phase_polynomial import (
     add_number_product_phase,
     number_product_pauli_z_coefficients,
     synthesize_pauli_z_phase_polynomial,
+    synthesize_pauli_z_phase_polynomial_parity_network,
 )
 from xquces.qiskit.gates.product_pair_uccd import (
     PairRegisterUCCDGivensJW,
@@ -71,4 +72,5 @@ __all__ = [
     "spin_balanced_circuit_gauge",
     "spin_balanced_rzz_circuit_gauge",
     "synthesize_pauli_z_phase_polynomial",
+    "synthesize_pauli_z_phase_polynomial_parity_network",
 ]

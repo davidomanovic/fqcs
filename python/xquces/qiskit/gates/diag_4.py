@@ -62,16 +62,7 @@ def _as_sigma_vector(sigma_values: np.ndarray, norb: int) -> np.ndarray:
 
 
 class Diag4SpinRestrictedJW(Gate):
-    """Spin-restricted iGCR-4 diagonal operator in Jordan-Wigner form.
-
-    The lower-order sectors are emitted by :class:`Diag3SpinRestrictedJW`.
-    The quartic sectors are exact number-product phase gadgets:
-
-    - ``D_p D_q`` -> one four-qubit phase.
-    - ``D_p N_q N_r`` -> four four-qubit phases, one for each spin choice
-      on ``q`` and ``r``.
-    - ``N_p N_q N_r N_s`` -> sixteen four-qubit phases.
-    """
+    """Spin-restricted iGCR-4 diagonal operator in Jordan-Wigner form."""
 
     def __init__(
         self,
@@ -160,7 +151,7 @@ def _diag4_spin_restricted_jw(
     synthesis = _validate_diagonal_synthesis(synthesis)
     threshold = _validate_threshold(threshold)
 
-    if synthesis == "phase_polynomial":
+    if synthesis in {"phase_polynomial", "parity_network"}:
         coeffs: dict[tuple[int, ...], float] = {}
         add_spin_restricted_diag2_number_products(
             coeffs,
@@ -185,7 +176,12 @@ def _diag4_spin_restricted_jw(
             time=time,
         )
         yield CircuitInstruction(
-            PhasePolynomialJW(coeffs, 2 * norb, threshold=threshold),
+            PhasePolynomialJW(
+                coeffs,
+                2 * norb,
+                threshold=threshold,
+                synthesis="parity_network" if synthesis == "parity_network" else "parity_gadgets",
+            ),
             tuple(qubits),
         )
         return

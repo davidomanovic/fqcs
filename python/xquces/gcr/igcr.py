@@ -700,6 +700,286 @@ def _solve_real_tikhonov(
     return np.asarray(coeff, dtype=np.float64)
 
 
+@dataclass(frozen=True)
+class CCSDResidualSeedInfo:
+    """Diagnostics for the non-variational CCSD state-residual seed."""
+
+    params: np.ndarray
+    active_blocks: tuple[str, ...]
+    raw_delta_norms: tuple[float, ...]
+    delta_norms: tuple[float, ...]
+    jacobian_ranks: tuple[int, ...]
+    scales: tuple[float, ...]
+    overlap_before: float
+    overlap_after: float
+
+
+def _as_restricted_t1(
+    t1: np.ndarray | None,
+    nocc: int,
+    nvirt: int,
+) -> np.ndarray:
+    if t1 is None:
+        return np.zeros((nocc, nvirt), dtype=np.float64)
+    arr = np.asarray(t1, dtype=np.float64)
+    if arr.shape != (nocc, nvirt):
+        raise ValueError(f"Expected t1 shape {(nocc, nvirt)}, got {arr.shape}.")
+    return arr
+
+
+def _as_restricted_t2(t2: np.ndarray, nocc: int, nvirt: int) -> np.ndarray:
+    arr = np.asarray(t2, dtype=np.float64)
+    if arr.shape != (nocc, nocc, nvirt, nvirt):
+        raise ValueError(
+            f"Expected t2 shape {(nocc, nocc, nvirt, nvirt)}, got {arr.shape}."
+        )
+    return arr
+
+
+def _ccsd_target_state_from_t_amplitudes(
+    t2: np.ndarray,
+    t1: np.ndarray | None,
+    norb: int,
+    nelec: tuple[int, int],
+    *,
+    max_power: int = 4,
+) -> np.ndarray:
+    """Build normalize[(1 + T + T^2/2! + ...) |HF>] from CCSD amplitudes."""
+    nocc = int(nelec[0])
+    nvirt = int(norb) - nocc
+    t1 = _as_restricted_t1(t1, nocc, nvirt)
+    t2 = _as_restricted_t2(t2, nocc, nvirt)
+    reference = ffsim.hartree_fock_state(norb, nelec)
+
+    t1_op = ffsim.linear_operator(
+        ffsim.singles_excitations_restricted(t1),
+        norb=norb,
+        nelec=nelec,
+    )
+    t2_op = ffsim.linear_operator(
+        ffsim.doubles_excitations_restricted(t2),
+        norb=norb,
+        nelec=nelec,
+    )
+
+    def apply_t(vec: np.ndarray) -> np.ndarray:
+        return np.asarray(t1_op @ vec + t2_op @ vec, dtype=np.complex128)
+
+    psi = np.array(reference, copy=True, dtype=np.complex128)
+    term = np.array(reference, copy=True, dtype=np.complex128)
+    for k in range(1, int(max_power) + 1):
+        term = apply_t(term) / float(k)
+        psi += term
+
+    norm = float(np.linalg.norm(psi))
+    if norm == 0.0 or not np.isfinite(norm):
+        raise ValueError("CCSD target construction produced a zero or non-finite state")
+    return psi / norm
+
+
+def _phase_align_target(target: np.ndarray, base: np.ndarray) -> np.ndarray:
+    overlap = np.vdot(base, target)
+    if abs(overlap) > 1.0e-14:
+        return np.asarray(target, dtype=np.complex128) * np.exp(
+            -1j * np.angle(overlap)
+        )
+    return np.asarray(target, dtype=np.complex128)
+
+
+def _state_overlap(target: np.ndarray, state: np.ndarray) -> float:
+    return float(abs(np.vdot(target, state)))
+
+
+def _real_stacked(matrix: np.ndarray) -> np.ndarray:
+    arr = np.asarray(matrix, dtype=np.complex128)
+    return np.vstack([arr.real, arr.imag])
+
+
+def _block_column_indices(
+    parameterization: object,
+    active_blocks: tuple[str, ...] | list[str] | set[str] | None,
+) -> np.ndarray:
+    if active_blocks is None:
+        return np.arange(int(parameterization.n_params), dtype=np.int64)
+    active_set = set(active_blocks)
+    indices: list[int] = []
+    seen: set[str] = set()
+    for block in parameter_blocks(parameterization):
+        if block.name in active_set:
+            indices.extend(range(block.start, block.stop))
+            seen.add(block.name)
+    missing = active_set - seen
+    if missing:
+        raise ValueError(f"Unknown parameter block(s): {sorted(missing)!r}")
+    return np.asarray(indices, dtype=np.int64)
+
+
+def _default_high_order_residual_blocks(
+    parameterization: object,
+    reduced_name: str,
+    full_names: tuple[str, ...],
+) -> tuple[str, ...]:
+    available = {block.name for block in parameter_blocks(parameterization)}
+    if reduced_name in available:
+        return (reduced_name,)
+    return tuple(name for name in full_names if name in available)
+
+
+def _state_residual_match_parameters(
+    parameterization: object,
+    reference: np.ndarray,
+    nelec: tuple[int, int],
+    x_base: np.ndarray,
+    target_state: np.ndarray,
+    *,
+    active_blocks: tuple[str, ...] | list[str] | set[str] | None = None,
+    damping: float = 1.0e-8,
+    max_step_norm: float = 0.1,
+    scale_scan: tuple[float, ...] | list[float] | None = (
+        0.0,
+        0.05,
+        0.1,
+        0.2,
+        0.4,
+        0.7,
+        1.0,
+    ),
+    n_iter: int = 3,
+) -> CCSDResidualSeedInfo:
+    """Gauss-Newton state matching to a CCSD target without using a Hamiltonian."""
+    x = np.asarray(x_base, dtype=np.float64).copy()
+    fixed = parameterization.apply(reference, nelec)
+    raw_delta_norms: list[float] = []
+    delta_norms: list[float] = []
+    jacobian_ranks: list[int] = []
+    scales: list[float] = []
+
+    psi0 = fixed.state_from_parameters(x)
+    target = _phase_align_target(target_state, psi0)
+    overlap_before = _state_overlap(target, psi0)
+    best_overlap = overlap_before
+    best_x = x.copy()
+    columns = _block_column_indices(parameterization, active_blocks)
+    active_block_names = (
+        tuple(block.name for block in parameter_blocks(parameterization))
+        if active_blocks is None
+        else tuple(active_blocks)
+    )
+
+    for _ in range(int(n_iter)):
+        psi = fixed.state_from_parameters(x)
+        target = _phase_align_target(target_state, psi)
+        residual = target - psi
+        residual -= psi * np.vdot(psi, residual)
+
+        jacobian = fixed.state_jacobian_from_parameters(x)
+        jacobian_block = np.array(jacobian[:, columns], copy=True, dtype=np.complex128)
+        jacobian_block -= psi[:, None] * (psi.conj() @ jacobian_block)[None, :]
+
+        delta = _solve_real_tikhonov(jacobian_block, residual, damping)
+        raw_delta_norm = float(np.linalg.norm(delta))
+        delta_norm = raw_delta_norm
+        if delta_norm > max_step_norm:
+            delta *= float(max_step_norm) / delta_norm
+            delta_norm = float(max_step_norm)
+
+        step = np.zeros_like(x, dtype=np.float64)
+        step[columns] = delta
+        rank = int(np.linalg.matrix_rank(_real_stacked(jacobian_block)))
+
+        scale = 1.0
+        if scale_scan is not None:
+            scale = 0.0
+            local_best_overlap = _state_overlap(target, psi)
+            for candidate in scale_scan:
+                candidate = float(candidate)
+                candidate_x = x + candidate * step
+                candidate_state = fixed.state_from_parameters(candidate_x)
+                candidate_overlap = _state_overlap(target, candidate_state)
+                if candidate_overlap > local_best_overlap + 1.0e-14:
+                    local_best_overlap = candidate_overlap
+                    scale = candidate
+
+        x_next = x + scale * step
+        psi_next = fixed.state_from_parameters(x_next)
+        overlap_next = _state_overlap(_phase_align_target(target_state, psi_next), psi_next)
+
+        raw_delta_norms.append(raw_delta_norm)
+        delta_norms.append(float(abs(scale) * delta_norm))
+        jacobian_ranks.append(rank)
+        scales.append(float(scale))
+
+        if overlap_next > best_overlap + 1.0e-14:
+            best_overlap = overlap_next
+            best_x = x_next.copy()
+
+        if scale == 0.0:
+            break
+        x = x_next
+
+    return CCSDResidualSeedInfo(
+        params=best_x,
+        active_blocks=active_block_names,
+        raw_delta_norms=tuple(raw_delta_norms),
+        delta_norms=tuple(delta_norms),
+        jacobian_ranks=tuple(jacobian_ranks),
+        scales=tuple(scales),
+        overlap_before=overlap_before,
+        overlap_after=best_overlap,
+    )
+
+
+def _parameters_from_ccsd_residual_seed(
+    parameterization: object,
+    t2: np.ndarray,
+    t1: np.ndarray | None,
+    x_base: np.ndarray,
+    *,
+    nelec: tuple[int, int] | None = None,
+    active_blocks: tuple[str, ...] | list[str] | set[str] | None = None,
+    target_max_power: int = 4,
+    damping: float = 1.0e-8,
+    max_step_norm: float = 0.1,
+    scale_scan: tuple[float, ...] | list[float] | None = (
+        0.0,
+        0.05,
+        0.1,
+        0.2,
+        0.4,
+        0.7,
+        1.0,
+    ),
+    n_iter: int = 3,
+    return_info: bool = False,
+) -> np.ndarray | CCSDResidualSeedInfo:
+    norb = int(parameterization.norb)
+    nocc = int(parameterization.nocc)
+    if nelec is None:
+        nelec = (nocc, nocc)
+    nelec = tuple(int(x) for x in nelec)
+    reference = ffsim.hartree_fock_state(norb, nelec)
+    target = _ccsd_target_state_from_t_amplitudes(
+        t2,
+        t1,
+        norb,
+        nelec,
+        max_power=target_max_power,
+    )
+    info = _state_residual_match_parameters(
+        parameterization,
+        reference,
+        nelec,
+        x_base,
+        target,
+        active_blocks=active_blocks,
+        damping=damping,
+        max_step_norm=max_step_norm,
+        scale_scan=scale_scan,
+        n_iter=n_iter,
+    )
+    return info if return_info else info.params
+
+
 def _restricted_ccsd_first_order_state(
     phi0: np.ndarray,
     t1: np.ndarray,
@@ -1174,14 +1454,15 @@ class IGCR2SpinRestrictedParameterization:
         t1: np.ndarray | None = None,
         **seed_options,
     ) -> np.ndarray:
-        """Seed parameters with a native one-layer CCSD-to-iGCR2 construction.
+        """Seed parameters from CCSD amplitudes through the UCJ lift.
 
-        The native seed first chooses a metric-conditioned right Thouless
-        reference, then solves linear least-squares problems for the Jastrow
-        coefficients and left orbital rotation.  Use
-        :meth:`parameters_from_ucj_t_amplitudes` for the old UCJ-lift seed.
+        The default path is the UCJ-lift seed so that iGCR2 initialized from
+        CCSD amplitudes matches the corresponding UCJ state.  The older native
+        one-layer construction remains available with ``strategy="direct"``.
         """
-        strategy = seed_options.pop("strategy", seed_options.pop("seed_strategy", "direct"))
+        strategy = seed_options.pop("strategy", seed_options.pop("seed_strategy", "ucj"))
+        if strategy in {"ccsd_residual", "state_residual", "residual"}:
+            raise ValueError("CCSD-residual seeding is only defined for iGCR3/iGCR4")
         if strategy in {"ucj", "ucj_lift", "ucj-t"} or self.layers != 1:
             return self.parameters_from_ucj_t_amplitudes(t2, t1=t1, **seed_options)
         if strategy not in {"direct", "native"}:
@@ -2753,6 +3034,77 @@ class IGCR3SpinRestrictedParameterization:
                 tau_scale=tau_scale,
                 omega_scale=omega_scale,
             )
+        )
+
+    def parameters_from_t_amplitudes(
+        self,
+        t2: np.ndarray,
+        t1: np.ndarray | None = None,
+        **seed_options,
+    ) -> np.ndarray:
+        """Seed iGCR3 from CCSD amplitudes by non-variational state matching.
+
+        ``strategy="ccsd_residual"`` constructs a CCSD target state from
+        ``exp(T1 + T2)|HF>`` truncated at ``target_max_power`` and projects the
+        residual onto this parameterization's tangent space.  No Hamiltonian or
+        energy minimization is used by the initializer.
+        """
+        strategy = seed_options.pop(
+            "strategy",
+            seed_options.pop("seed_strategy", "ccsd_residual"),
+        )
+        igcr2_param = IGCR2SpinRestrictedParameterization(
+            norb=self.norb,
+            nocc=self.nocc,
+            layers=self.layers,
+            shared_diagonal=self.shared_diagonal,
+            interaction_pairs=self.interaction_pairs,
+            left_orbital_chart=self.left_orbital_chart,
+            middle_orbital_chart=self.middle_orbital_chart,
+            right_orbital_chart_override=self.right_orbital_chart_override,
+            real_right_orbital_chart=self.real_right_orbital_chart,
+            left_right_ov_relative_scale=self.left_right_ov_relative_scale,
+        )
+        igcr2_strategy = seed_options.pop("igcr2_strategy", "ucj")
+        igcr2_options = dict(seed_options.pop("igcr2_options", {}))
+        igcr2_params = igcr2_param.parameters_from_t_amplitudes(
+            t2,
+            t1=t1,
+            strategy=igcr2_strategy,
+            **igcr2_options,
+        )
+        igcr2_ansatz = igcr2_param.ansatz_from_parameters(igcr2_params)
+        x_base = self.parameters_from_igcr2_ansatz(
+            igcr2_ansatz,
+            tau_scale=0.0,
+            omega_scale=0.0,
+        )
+        if strategy in {"igcr2", "zero_embed", "ucj", "ucj_lift", "ucj-t"}:
+            return x_base
+        if strategy not in {"ccsd_residual", "state_residual", "residual"}:
+            raise ValueError(f"Unknown iGCR3 t-amplitude seed strategy: {strategy!r}")
+        active_blocks = seed_options.pop("active_blocks", None)
+        if active_blocks is None:
+            active_blocks = _default_high_order_residual_blocks(
+                self,
+                "cubic",
+                ("tau", "omega"),
+            )
+        return _parameters_from_ccsd_residual_seed(
+            self,
+            t2,
+            t1,
+            x_base,
+            active_blocks=active_blocks,
+            target_max_power=seed_options.pop("target_max_power", 4),
+            damping=seed_options.pop("damping", 1.0e-8),
+            max_step_norm=seed_options.pop("max_step_norm", 0.1),
+            scale_scan=seed_options.pop(
+                "scale_scan",
+                (0.0, 0.05, 0.1, 0.2, 0.4, 0.7, 1.0),
+            ),
+            n_iter=seed_options.pop("n_iter", 3),
+            return_info=seed_options.pop("return_info", False),
         )
 
     def parameters_from_ucj_ansatz(
@@ -4506,6 +4858,90 @@ class IGCR4SpinRestrictedParameterization:
             )
         )
 
+    def parameters_from_t_amplitudes(
+        self,
+        t2: np.ndarray,
+        t1: np.ndarray | None = None,
+        **seed_options,
+    ) -> np.ndarray:
+        """Seed iGCR4 from CCSD amplitudes by non-variational state matching."""
+        strategy = seed_options.pop(
+            "strategy",
+            seed_options.pop("seed_strategy", "ccsd_residual"),
+        )
+        igcr3_param = IGCR3SpinRestrictedParameterization(
+            norb=self.norb,
+            nocc=self.nocc,
+            layers=self.layers,
+            shared_diagonal=self.shared_diagonal,
+            interaction_pairs=self.interaction_pairs,
+            tau_indices_=self.tau_indices_,
+            omega_indices_=self.omega_indices_,
+            reduce_cubic_gauge=self.reduce_cubic_gauge,
+            left_orbital_chart=self.left_orbital_chart,
+            middle_orbital_chart=self.middle_orbital_chart,
+            right_orbital_chart_override=self.right_orbital_chart_override,
+            real_right_orbital_chart=self.real_right_orbital_chart,
+            left_right_ov_relative_scale=self.left_right_ov_relative_scale,
+        )
+        igcr3_strategy = seed_options.pop("igcr3_strategy", "ccsd_residual")
+        igcr3_options = dict(seed_options.pop("igcr3_options", {}))
+        if "igcr2_strategy" not in seed_options and "igcr2_strategy" not in igcr3_options:
+            igcr3_options["igcr2_strategy"] = "ucj"
+        if "igcr2_strategy" in seed_options and "igcr2_strategy" not in igcr3_options:
+            igcr3_options["igcr2_strategy"] = seed_options["igcr2_strategy"]
+        if "igcr2_options" in seed_options and "igcr2_options" not in igcr3_options:
+            igcr3_options["igcr2_options"] = seed_options["igcr2_options"]
+        for key in (
+            "target_max_power",
+            "damping",
+            "max_step_norm",
+            "scale_scan",
+            "n_iter",
+        ):
+            if key in seed_options and key not in igcr3_options:
+                igcr3_options[key] = seed_options[key]
+        igcr3_params = igcr3_param.parameters_from_t_amplitudes(
+            t2,
+            t1=t1,
+            strategy=igcr3_strategy,
+            **igcr3_options,
+        )
+        igcr3_ansatz = igcr3_param.ansatz_from_parameters(igcr3_params)
+        x_base = self.parameters_from_igcr3_ansatz(
+            igcr3_ansatz,
+            eta_scale=0.0,
+            rho_scale=0.0,
+            sigma_scale=0.0,
+        )
+        if strategy in {"igcr3", "zero_embed", "ucj", "ucj_lift", "ucj-t"}:
+            return x_base
+        if strategy not in {"ccsd_residual", "state_residual", "residual"}:
+            raise ValueError(f"Unknown iGCR4 t-amplitude seed strategy: {strategy!r}")
+        active_blocks = seed_options.pop("active_blocks", None)
+        if active_blocks is None:
+            active_blocks = _default_high_order_residual_blocks(
+                self,
+                "quartic",
+                ("eta", "rho", "sigma"),
+            )
+        return _parameters_from_ccsd_residual_seed(
+            self,
+            t2,
+            t1,
+            x_base,
+            active_blocks=active_blocks,
+            target_max_power=seed_options.pop("target_max_power", 4),
+            damping=seed_options.pop("damping", 1.0e-8),
+            max_step_norm=seed_options.pop("max_step_norm", 0.1),
+            scale_scan=seed_options.pop(
+                "scale_scan",
+                (0.0, 0.05, 0.1, 0.2, 0.4, 0.7, 1.0),
+            ),
+            n_iter=seed_options.pop("n_iter", 3),
+            return_info=seed_options.pop("return_info", False),
+        )
+
     def parameters_from_ucj_ansatz(
         self,
         ansatz: UCJAnsatz,
@@ -4931,8 +5367,16 @@ def parameters_from_t2(
             return target.parameters_from_t_amplitudes(t2, t1=t1, **kwargs)
         ansatz = IGCR2Ansatz.from_t_restricted(t2, **kwargs)
     elif order == 3:
+        target = getattr(parameterization, "implementation", parameterization)
+        if isinstance(target, IGCR3SpinRestrictedParameterization):
+            t1 = kwargs.pop("t1", None)
+            return target.parameters_from_t_amplitudes(t2, t1=t1, **kwargs)
         ansatz = IGCR3Ansatz.from_t_restricted(t2, **kwargs)
     elif order == 4:
+        target = getattr(parameterization, "implementation", parameterization)
+        if isinstance(target, IGCR4SpinRestrictedParameterization):
+            t1 = kwargs.pop("t1", None)
+            return target.parameters_from_t_amplitudes(t2, t1=t1, **kwargs)
         ansatz = IGCR4Ansatz.from_t_restricted(t2, **kwargs)
     else:
         raise ValueError("source_order must be 2, 3, or 4")
@@ -5120,6 +5564,7 @@ __all__ = [
     "GCR2FullUnitaryChart",
     "GCR2TraceFixedFullUnitaryChart",
     "GCRParameterBlock",
+    "CCSDResidualSeedInfo",
     "IGCR2Ansatz",
     "IGCR2LayeredAnsatz",
     "IGCR2BlockDiagLeftUnitaryChart",

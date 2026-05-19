@@ -22,12 +22,23 @@ from xquces.gcr.utils import (
 
 PauliZCoefficients = dict[tuple[int, ...], float]
 
+_PHASE_POLYNOMIAL_SYNTHESIS_MODES = frozenset(
+    {"parity_gadgets", "balanced_parity_gadgets", "parity_network"}
+)
+
 
 def _validate_threshold(threshold: float) -> float:
     out = float(threshold)
     if not np.isfinite(out) or out < 0.0:
         raise ValueError("threshold must be a non-negative finite float")
     return out
+
+
+def _validate_phase_polynomial_synthesis(synthesis: str) -> str:
+    if synthesis not in _PHASE_POLYNOMIAL_SYNTHESIS_MODES:
+        allowed = ", ".join(sorted(_PHASE_POLYNOMIAL_SYNTHESIS_MODES))
+        raise ValueError(f"synthesis must be one of {{{allowed}}}")
+    return synthesis
 
 
 def _sorted_distinct_indices(indices: Sequence[int]) -> tuple[int, ...]:
@@ -71,45 +82,137 @@ def add_number_product_phase(
             coeffs[subset] = float(coeffs.get(subset, 0.0)) + sign * scale
 
 
+def _active_pauli_z_terms(
+    coeffs: Mapping[tuple[int, ...], float],
+    nqubits: int,
+    threshold: float,
+) -> list[tuple[tuple[int, ...], float]]:
+    out: PauliZCoefficients = {}
+    for support0, coeff0 in coeffs.items():
+        support = tuple(sorted(int(i) for i in support0))
+        if not support:
+            continue
+        if len(set(support)) != len(support):
+            raise ValueError("Pauli-Z supports must contain distinct qubit indices")
+        if support[0] < 0 or support[-1] >= nqubits:
+            raise ValueError("Pauli-Z support index out of range")
+        coeff = float(coeff0)
+        if coeff == 0.0:
+            continue
+        out[support] = out.get(support, 0.0) + coeff
+    return [
+        (support, coeff)
+        for support, coeff in sorted(out.items())
+        if abs(coeff) > threshold
+    ]
+
+
+def _yield_ladder_phase_gadget(
+    support: tuple[int, ...],
+    coeff: float,
+    qubits: Sequence[Qubit],
+) -> Iterator[CircuitInstruction]:
+    target = support[-1]
+    if len(support) == 1:
+        yield CircuitInstruction(RZGate(-2.0 * coeff), (qubits[target],))
+        return
+
+    for control in support[:-1]:
+        yield CircuitInstruction(CXGate(), (qubits[control], qubits[target]))
+    yield CircuitInstruction(RZGate(-2.0 * coeff), (qubits[target],))
+    for control in reversed(support[:-1]):
+        yield CircuitInstruction(CXGate(), (qubits[control], qubits[target]))
+
+
+def _yield_balanced_phase_gadget(
+    support: tuple[int, ...],
+    coeff: float,
+    qubits: Sequence[Qubit],
+) -> Iterator[CircuitInstruction]:
+    if len(support) == 1:
+        yield CircuitInstruction(RZGate(-2.0 * coeff), (qubits[support[0]],))
+        return
+
+    active = list(support)
+    history: list[tuple[int, int]] = []
+    while len(active) > 1:
+        next_active: list[int] = []
+        for i in range(0, len(active) - 1, 2):
+            control = active[i]
+            target = active[i + 1]
+            yield CircuitInstruction(CXGate(), (qubits[control], qubits[target]))
+            history.append((control, target))
+            next_active.append(target)
+        if len(active) % 2:
+            next_active.append(active[-1])
+        active = next_active
+
+    target = active[0]
+    yield CircuitInstruction(RZGate(-2.0 * coeff), (qubits[target],))
+    for control, target in reversed(history):
+        yield CircuitInstruction(CXGate(), (qubits[control], qubits[target]))
+
+
 def synthesize_pauli_z_phase_polynomial(
     coeffs: Mapping[tuple[int, ...], float],
     qubits: Sequence[Qubit],
     *,
     threshold: float = 0.0,
+    synthesis: str = "parity_gadgets",
 ) -> Iterator[CircuitInstruction]:
-    """Yield parity-gadget instructions for ``prod_B exp(i c_B Z_B)``."""
+    """Yield instructions for ``prod_B exp(i c_B Z_B)``."""
+    threshold = _validate_threshold(threshold)
+    synthesis = _validate_phase_polynomial_synthesis(synthesis)
+    nqubits = len(qubits)
+    terms = _active_pauli_z_terms(coeffs, nqubits, threshold)
+
+    if synthesis == "balanced_parity_gadgets":
+        yield from synthesize_pauli_z_phase_polynomial_balanced_parity_gadgets(
+            dict(terms),
+            qubits,
+            threshold=threshold,
+        )
+        return
+
+    for support, coeff in terms:
+        yield from _yield_ladder_phase_gadget(support, coeff, qubits)
+
+
+def synthesize_pauli_z_phase_polynomial_balanced_parity_gadgets(
+    coeffs: Mapping[tuple[int, ...], float],
+    qubits: Sequence[Qubit],
+    *,
+    threshold: float = 0.0,
+) -> Iterator[CircuitInstruction]:
+    """Yield all-to-all balanced parity-gadget instructions."""
     threshold = _validate_threshold(threshold)
     nqubits = len(qubits)
+    terms = _active_pauli_z_terms(coeffs, nqubits, threshold)
+    for support, coeff in terms:
+        yield from _yield_balanced_phase_gadget(support, coeff, qubits)
 
-    for support, coeff0 in sorted(coeffs.items()):
-        support = tuple(int(i) for i in support)
-        if not support:
-            continue
-        if len(set(support)) != len(support):
-            raise ValueError("Pauli-Z supports must contain distinct qubit indices")
-        if support != tuple(sorted(support)):
-            raise ValueError("Pauli-Z supports must be sorted")
-        if support[0] < 0 or support[-1] >= nqubits:
-            raise ValueError("Pauli-Z support index out of range")
 
-        coeff = float(coeff0)
-        if abs(coeff) <= threshold:
-            continue
+def synthesize_pauli_z_phase_polynomial_parity_network(
+    coeffs: Mapping[tuple[int, ...], float],
+    qubits: Sequence[Qubit],
+    *,
+    threshold: float = 0.0,
+) -> Iterator[CircuitInstruction]:
+    """Yield the default ladder phase-polynomial synthesis.
 
-        target = support[-1]
-        if len(support) == 1:
-            yield CircuitInstruction(RZGate(-2.0 * coeff), (qubits[target],))
-            continue
-
-        for control in support[:-1]:
-            yield CircuitInstruction(CXGate(), (qubits[control], qubits[target]))
-        yield CircuitInstruction(RZGate(-2.0 * coeff), (qubits[target],))
-        for control in reversed(support[:-1]):
-            yield CircuitInstruction(CXGate(), (qubits[control], qubits[target]))
+    Dense iGCR3/iGCR4 all-to-all benchmarks favor the ladder phase-gadget
+    ordering because downstream transpilation cancels adjacent CNOT structure
+    more effectively than the experimental shared or balanced parity networks.
+    """
+    threshold = _validate_threshold(threshold)
+    nqubits = len(qubits)
+    terms = _active_pauli_z_terms(coeffs, nqubits, threshold)
+    for support, coeff in terms:
+        yield from _yield_ladder_phase_gadget(support, coeff, qubits)
 
 
 class PhasePolynomialJW(Gate):
-    """Collected Pauli-Z phase polynomial synthesized with parity gadgets."""
+    """Collected Pauli-Z phase polynomial."""
 
     def __init__(
         self,
@@ -117,12 +220,14 @@ class PhasePolynomialJW(Gate):
         nqubits: int,
         *,
         threshold: float = 0.0,
+        synthesis: str = "parity_gadgets",
         label: str | None = None,
     ):
         self.nqubits = int(nqubits)
         if self.nqubits < 0:
             raise ValueError("nqubits must be non-negative")
         self.threshold = _validate_threshold(threshold)
+        self.synthesis = _validate_phase_polynomial_synthesis(synthesis)
         self.coeffs = self._normalize_coefficients(coeffs)
         super().__init__("phase_polynomial_jw", self.nqubits, [], label=label)
 
@@ -152,6 +257,7 @@ class PhasePolynomialJW(Gate):
             self.coeffs,
             qubits,
             threshold=self.threshold,
+            synthesis=self.synthesis,
         ):
             circuit.append(instruction)
         self.definition = circuit
@@ -161,6 +267,7 @@ class PhasePolynomialJW(Gate):
             {support: -coeff for support, coeff in self.coeffs.items()},
             self.nqubits,
             threshold=self.threshold,
+            synthesis=self.synthesis,
             label=self.label,
         )
 
