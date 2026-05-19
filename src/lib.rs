@@ -2,28 +2,28 @@ use pyo3::prelude::*;
 
 mod orbital_rotation;
 mod pair_uccd;
-mod ucj_diag;
+mod correlators;
 
 #[pymodule]
 fn _lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(
-        ucj_diag::apply_ucj_spin_restricted_in_place_num_rep,
+        correlators::apply_ucj_spin_restricted_in_place_num_rep,
         m
     )?)?;
     m.add_function(wrap_pyfunction!(
-        ucj_diag::apply_ucj_spin_balanced_in_place_num_rep,
+        correlators::apply_ucj_spin_balanced_in_place_num_rep,
         m
     )?)?;
     m.add_function(wrap_pyfunction!(
-        ucj_diag::apply_igcr2_spin_restricted_in_place_num_rep,
+        correlators::apply_igcr2_spin_restricted_in_place_num_rep,
         m
     )?)?;
     m.add_function(wrap_pyfunction!(
-        ucj_diag::apply_igcr3_spin_restricted_in_place_num_rep,
+        correlators::apply_igcr3_spin_restricted_in_place_num_rep,
         m
     )?)?;
     m.add_function(wrap_pyfunction!(
-        ucj_diag::apply_igcr4_spin_restricted_in_place_num_rep,
+        correlators::apply_igcr4_spin_restricted_in_place_num_rep,
         m
     )?)?;
     m.add_function(wrap_pyfunction!(
