@@ -299,7 +299,3 @@ class SpinRestrictedLayeredDiagonalParameterizationCore:
             final = right_rotation
         out[idx : idx + n] = self.right_orbital_chart.parameters_from_unitary(final)
 
-
-__all__ = [
-    "SpinRestrictedLayeredDiagonalParameterizationCore",
-]

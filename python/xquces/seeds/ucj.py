@@ -148,8 +148,3 @@ def layered_igcr2_from_ccsd_t_amplitudes(
         t2, t1=t1, layers=layers, nocc=nocc, **df_options
     )
 
-
-__all__ = [
-    "layered_igcr2_from_ccsd_t_amplitudes",
-    "layered_igcr2_from_ucj_t_amplitudes",
-]

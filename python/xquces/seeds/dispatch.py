@@ -109,8 +109,3 @@ def parameters_from_t2(
         raise ValueError("source_order must be 2, 3, or 4")
     return embed_ansatz_parameters(parameterization, ansatz)
 
-
-__all__ = [
-    "embed_ansatz_parameters",
-    "parameters_from_t2",
-]

@@ -574,38 +574,3 @@ def _validate_sigma_indices(
         seen.add((p, q, r, s))
         out.append((p, q, r, s))
     return out
-
-__all__ = [
-    "_assert_square_matrix",
-    "_balanced_irreducible_pair_matrices",
-    "_balanced_left_phase_vector",
-    "_default_eta_indices",
-    "_default_pair_indices",
-    "_default_rho_indices",
-    "_default_sigma_indices",
-    "_default_tau_indices",
-    "_default_triple_indices",
-    "_diag_unitary",
-    "_final_unitary_from_left_and_right",
-    "_left_right_ov_adapted_to_native",
-    "_native_to_left_right_ov_adapted",
-    "_n_total_from_nocc",
-    "_orbital_relabeling_unitary",
-    "_ordered_matrix_from_values",
-    "_parameters_from_zero_diag_antihermitian",
-    "_restricted_irreducible_pair_matrix",
-    "_restricted_left_phase_vector",
-    "_right_unitary_from_left_and_final",
-    "_symmetric_matrix_from_values",
-    "_validate_ordered_pairs",
-    "_validate_pairs",
-    "_validate_rho_indices",
-    "_validate_sigma_indices",
-    "_validate_triples",
-    "_values_from_ordered_matrix",
-    "_zero_diag_antihermitian_from_parameters",
-    "exact_reference_ov_params_from_unitary",
-    "exact_reference_ov_unitary",
-    "orbital_relabeling_from_overlap",
-    "orbital_transport_unitary_from_overlap",
-]

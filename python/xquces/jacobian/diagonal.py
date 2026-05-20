@@ -141,11 +141,3 @@ def _diag_feature_matrix(
         return _igcr4_feature_matrix(parameterization, nelec)
     raise TypeError(type(parameterization).__name__)
 
-
-__all__ = [
-    "_diag_feature_matrix",
-    "_igcr2_feature_matrix",
-    "_igcr3_feature_matrix",
-    "_igcr4_feature_matrix",
-    "_number_arrays",
-]

@@ -141,7 +141,3 @@ class GateSequenceParameterization:
         resolved = None if nelec is None else tuple(int(x) for x in nelec)
         return apply_ansatz_parameterization(self, reference, resolved)
 
-
-__all__ = [
-    "GateSequenceParameterization",
-]

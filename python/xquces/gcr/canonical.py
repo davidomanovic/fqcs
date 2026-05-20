@@ -492,9 +492,3 @@ def install_igcr_legacy_adapters() -> None:
 
     return None
 
-
-__all__ = [
-    "IGCRAnsatz",
-    "IGCRDiagonalCoefficients",
-    "install_igcr_legacy_adapters",
-]

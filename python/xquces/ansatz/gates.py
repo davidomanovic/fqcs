@@ -55,8 +55,3 @@ class DiagonalCorrelatorGate:
             raise ValueError(f"Expected {(self.n_params,)}, got {params.shape}.")
         return self.chart.coefficients_from_parameters(params)
 
-
-__all__ = [
-    "DiagonalCorrelatorGate",
-    "OrbitalRotationGate",
-]

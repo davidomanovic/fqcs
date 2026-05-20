@@ -319,8 +319,3 @@ def _igcr4_quartic_reduction_matrices(norb: int, nocc: int):
             physical[:, j] *= -1.0
     return gauge_cubic, gauge_quartic, physical
 
-
-__all__ = [
-    "IGCR3CubicReduction",
-    "IGCR4QuarticReduction",
-]

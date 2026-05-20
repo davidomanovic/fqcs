@@ -872,12 +872,3 @@ class RestrictedQuarticChart:
             raise ValueError("diagonal parameter block has inconsistent length")
         return out, phase_vec
 
-
-__all__ = [
-    "RestrictedPairChart",
-    "RestrictedPairCoefficients",
-    "RestrictedCubicChart",
-    "RestrictedCubicCoefficients",
-    "RestrictedQuarticChart",
-    "RestrictedQuarticCoefficients",
-]

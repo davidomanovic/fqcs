@@ -133,10 +133,3 @@ def as_legacy_layered_igcr_ansatz(
         order=order,
     )
 
-
-__all__ = [
-    "as_layered_igcr_ansatz",
-    "as_legacy_layered_igcr_ansatz",
-    "scale_igcr_diagonal",
-    "to_legacy_layered_igcr_ansatz",
-]

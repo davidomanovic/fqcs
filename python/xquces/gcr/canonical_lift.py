@@ -203,9 +203,3 @@ def lift_igcr2_to_igcr4(
         sigma_scale=sigma_scale,
     )
 
-
-__all__ = [
-    "lift_igcr2_to_igcr3",
-    "lift_igcr2_to_igcr4",
-    "lift_igcr3_to_igcr4",
-]

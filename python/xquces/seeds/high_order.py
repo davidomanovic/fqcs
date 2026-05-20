@@ -162,8 +162,3 @@ def igcr4_parameters_from_t_amplitudes(
         return_info=seed_options.pop("return_info", False),
     )
 
-
-__all__ = [
-    "igcr3_parameters_from_t_amplitudes",
-    "igcr4_parameters_from_t_amplitudes",
-]

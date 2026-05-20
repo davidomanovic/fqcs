@@ -302,7 +302,3 @@ def _parameters_from_ccsd_residual_seed(
     )
     return info if return_info else info.params
 
-
-__all__ = [
-    "CCSDResidualSeedInfo",
-]

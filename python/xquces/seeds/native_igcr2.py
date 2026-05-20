@@ -314,7 +314,3 @@ def native_igcr2_seed_from_ccsd_t_amplitudes(
         )
     return best["ansatz"]
 
-
-__all__ = [
-    "native_igcr2_seed_from_ccsd_t_amplitudes",
-]

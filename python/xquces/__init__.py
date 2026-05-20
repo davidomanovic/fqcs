@@ -130,10 +130,6 @@ from xquces.ucj.parameterization import (
     UCJSpinRestrictedParameterization,
 )
 from xquces.optimize.linear_method import minimize_linear_method
-from xquces.optimize.subspace_linear_method import (
-    gradient_coordinate_subspace,
-    minimize_subspace_linear_method,
-)
 from xquces.presets import IGCR, PairUCCD_GCR
 from xquces.utils import apply_spin_square, spin_square, build_hydrogen_ring
 
@@ -227,9 +223,7 @@ __all__ = [
     "transport_igcr2_ansatz_orbitals",
     "transport_igcr3_ansatz_orbitals",
     "transport_igcr4_ansatz_orbitals",
-    "gradient_coordinate_subspace",
     "minimize_linear_method",
-    "minimize_subspace_linear_method",
     "apply_spin_square",
     "spin_square",
     "slater_pair_orbital_rotation_from_parameters",
