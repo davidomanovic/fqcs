@@ -873,23 +873,22 @@ class IGCRSpinRestrictedParameterization:
         rho_scale: float = 0.0,
         sigma_scale: float = 0.0,
     ) -> np.ndarray:
-        generic = ansatz if isinstance(ansatz, IGCRAnsatz) else ansatz.to_generic()
+        generic = self._canonical_from_transfer_ansatz(ansatz)
         if generic.order != 2:
             raise TypeError("expected an iGCR-2 ansatz")
-        legacy = generic.to_igcr2_ansatz()
         if self.order == 2:
             return self.parameters_from_ansatz(generic)
         if self.order == 3:
             return self.parameters_from_ansatz(
-                _igcr3_ansatz_from_igcr2_any(
-                    legacy,
+                lift_igcr2_to_igcr3(
+                    generic,
                     tau_scale=tau_scale,
                     omega_scale=omega_scale,
                 )
             )
         return self.parameters_from_ansatz(
-            _igcr4_ansatz_from_igcr2_any(
-                legacy,
+            lift_igcr2_to_igcr4(
+                generic,
                 tau_scale=tau_scale,
                 omega_scale=omega_scale,
                 eta_scale=eta_scale,
@@ -906,7 +905,7 @@ class IGCRSpinRestrictedParameterization:
         rho_scale: float = 0.0,
         sigma_scale: float = 0.0,
     ) -> np.ndarray:
-        generic = ansatz if isinstance(ansatz, IGCRAnsatz) else ansatz.to_generic()
+        generic = self._canonical_from_transfer_ansatz(ansatz)
         if generic.order != 3:
             raise TypeError("expected an iGCR-3 ansatz")
         if self.order == 3:
@@ -914,8 +913,8 @@ class IGCRSpinRestrictedParameterization:
         if self.order != 4:
             raise TypeError("cannot embed an iGCR-3 ansatz into iGCR-2")
         return self.parameters_from_ansatz(
-            _igcr4_ansatz_from_igcr3_any(
-                generic.to_igcr3_ansatz(),
+            lift_igcr3_to_igcr4(
+                generic,
                 eta_scale=eta_scale,
                 rho_scale=rho_scale,
                 sigma_scale=sigma_scale,
@@ -1416,21 +1415,6 @@ def _as_layered_igcr3_spin_restricted_ansatz(
     return as_legacy_layered_igcr_ansatz(ansatz, layers, order=3)
 
 
-def _igcr3_ansatz_from_igcr2_any(
-    ansatz: IGCR2Ansatz | IGCR2LayeredAnsatz,
-    *,
-    tau_scale: float = 0.0,
-    omega_scale: float = 0.0,
-) -> IGCR3Ansatz | IGCR3LayeredAnsatz:
-    return lift_igcr2_to_igcr3(
-        ansatz,
-        tau_scale=tau_scale,
-        omega_scale=omega_scale,
-    ).to_legacy()
-
-
-
-
 def relabel_igcr3_ansatz_orbitals(
     ansatz: IGCR3Ansatz | IGCR3LayeredAnsatz,
     old_for_new: np.ndarray,
@@ -1475,11 +1459,11 @@ def igcr3_from_igcr2_ansatz(
     tau_scale: float = 0.0,
     omega_scale: float = 0.0,
 ) -> IGCR3Ansatz | IGCR3LayeredAnsatz:
-    return _igcr3_ansatz_from_igcr2_any(
+    return lift_igcr2_to_igcr3(
         ansatz,
         tau_scale=tau_scale,
         omega_scale=omega_scale,
-    )
+    ).to_legacy()
 
 
 
@@ -1490,42 +1474,6 @@ def _as_layered_igcr4_spin_restricted_ansatz(
     layers: int,
 ) -> IGCR4LayeredAnsatz:
     return as_legacy_layered_igcr_ansatz(ansatz, layers, order=4)
-
-
-def _igcr4_ansatz_from_igcr3_any(
-    ansatz: IGCR3Ansatz | IGCR3LayeredAnsatz,
-    *,
-    eta_scale: float = 0.0,
-    rho_scale: float = 0.0,
-    sigma_scale: float = 0.0,
-) -> IGCR4Ansatz | IGCR4LayeredAnsatz:
-    return lift_igcr3_to_igcr4(
-        ansatz,
-        eta_scale=eta_scale,
-        rho_scale=rho_scale,
-        sigma_scale=sigma_scale,
-    ).to_legacy()
-
-
-def _igcr4_ansatz_from_igcr2_any(
-    ansatz: IGCR2Ansatz | IGCR2LayeredAnsatz,
-    *,
-    tau_scale: float = 0.0,
-    omega_scale: float = 0.0,
-    eta_scale: float = 0.0,
-    rho_scale: float = 0.0,
-    sigma_scale: float = 0.0,
-) -> IGCR4Ansatz | IGCR4LayeredAnsatz:
-    return lift_igcr2_to_igcr4(
-        ansatz,
-        tau_scale=tau_scale,
-        omega_scale=omega_scale,
-        eta_scale=eta_scale,
-        rho_scale=rho_scale,
-        sigma_scale=sigma_scale,
-    ).to_legacy()
-
-
 
 
 def relabel_igcr4_ansatz_orbitals(
@@ -1573,12 +1521,12 @@ def igcr4_from_igcr3_ansatz(
     rho_scale: float = 0.0,
     sigma_scale: float = 0.0,
 ) -> IGCR4Ansatz | IGCR4LayeredAnsatz:
-    return _igcr4_ansatz_from_igcr3_any(
+    return lift_igcr3_to_igcr4(
         ansatz,
         eta_scale=eta_scale,
         rho_scale=rho_scale,
         sigma_scale=sigma_scale,
-    )
+    ).to_legacy()
 
 
 def igcr4_from_igcr2_ansatz(
@@ -1590,14 +1538,14 @@ def igcr4_from_igcr2_ansatz(
     rho_scale: float = 0.0,
     sigma_scale: float = 0.0,
 ) -> IGCR4Ansatz | IGCR4LayeredAnsatz:
-    return _igcr4_ansatz_from_igcr2_any(
+    return lift_igcr2_to_igcr4(
         ansatz,
         tau_scale=tau_scale,
         omega_scale=omega_scale,
         eta_scale=eta_scale,
         rho_scale=rho_scale,
         sigma_scale=sigma_scale,
-    )
+    ).to_legacy()
 
 GCRParameterBlock = ParameterBlock
 
