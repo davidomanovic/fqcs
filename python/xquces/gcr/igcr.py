@@ -60,6 +60,11 @@ from xquces.gcr.restricted_model import (
 )
 from xquces.gcr.canonical import IGCRAnsatz, IGCRDiagonalCoefficients
 from xquces.gcr.canonical_layering import as_legacy_layered_igcr_ansatz
+from xquces.gcr.canonical_lift import (
+    lift_igcr2_to_igcr3,
+    lift_igcr2_to_igcr4,
+    lift_igcr3_to_igcr4,
+)
 from xquces.gcr.canonical_transform import (
     relabel_igcr_ansatz_orbitals,
     relabel_legacy_igcr_ansatz_orbitals,
@@ -1318,37 +1323,11 @@ def _igcr3_ansatz_from_igcr2_any(
     tau_scale: float = 0.0,
     omega_scale: float = 0.0,
 ) -> IGCR3Ansatz | IGCR3LayeredAnsatz:
-    if isinstance(ansatz, IGCR2LayeredAnsatz):
-        if not ansatz.is_spin_restricted:
-            raise TypeError(
-                "iGCR-3 is currently implemented only for spin-restricted seeds"
-            )
-        diagonals = []
-        for diagonal in ansatz.diagonals:
-            d = diagonal.to_standard()
-            tau, omega = spin_restricted_triples_seed_from_pair_params(
-                d.pair_params,
-                ansatz.nocc,
-                tau_scale=tau_scale,
-                omega_scale=omega_scale,
-            )
-            diagonals.append(
-                IGCR3SpinRestrictedSpec.from_igcr2_diagonal(
-                    diagonal,
-                    tau=tau,
-                    omega_values=omega,
-                )
-            )
-        return IGCR3LayeredAnsatz(
-            diagonals=tuple(diagonals),
-            rotations=ansatz.rotations,
-            nocc=ansatz.nocc,
-        )
-    return IGCR3Ansatz.from_igcr2_ansatz(
+    return lift_igcr2_to_igcr3(
         ansatz,
         tau_scale=tau_scale,
         omega_scale=omega_scale,
-    )
+    ).to_legacy()
 
 
 
@@ -1421,35 +1400,12 @@ def _igcr4_ansatz_from_igcr3_any(
     rho_scale: float = 0.0,
     sigma_scale: float = 0.0,
 ) -> IGCR4Ansatz | IGCR4LayeredAnsatz:
-    if isinstance(ansatz, IGCR3LayeredAnsatz):
-        diagonals = []
-        for diagonal in ansatz.diagonals:
-            eta, rho, sigma = spin_restricted_quartic_seed_from_pair_params(
-                diagonal.pair_matrix(),
-                ansatz.nocc,
-                eta_scale=eta_scale,
-                rho_scale=rho_scale,
-                sigma_scale=sigma_scale,
-            )
-            diagonals.append(
-                IGCR4SpinRestrictedSpec.from_igcr3_diagonal(
-                    diagonal,
-                    eta_values=eta,
-                    rho_values=rho,
-                    sigma_values=sigma,
-                )
-            )
-        return IGCR4LayeredAnsatz(
-            diagonals=tuple(diagonals),
-            rotations=ansatz.rotations,
-            nocc=ansatz.nocc,
-        )
-    return IGCR4Ansatz.from_igcr3_ansatz(
+    return lift_igcr3_to_igcr4(
         ansatz,
         eta_scale=eta_scale,
         rho_scale=rho_scale,
         sigma_scale=sigma_scale,
-    )
+    ).to_legacy()
 
 
 def _igcr4_ansatz_from_igcr2_any(
@@ -1461,17 +1417,14 @@ def _igcr4_ansatz_from_igcr2_any(
     rho_scale: float = 0.0,
     sigma_scale: float = 0.0,
 ) -> IGCR4Ansatz | IGCR4LayeredAnsatz:
-    igcr3 = _igcr3_ansatz_from_igcr2_any(
+    return lift_igcr2_to_igcr4(
         ansatz,
         tau_scale=tau_scale,
         omega_scale=omega_scale,
-    )
-    return _igcr4_ansatz_from_igcr3_any(
-        igcr3,
         eta_scale=eta_scale,
         rho_scale=rho_scale,
         sigma_scale=sigma_scale,
-    )
+    ).to_legacy()
 
 
 

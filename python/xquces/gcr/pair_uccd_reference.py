@@ -19,10 +19,8 @@ from xquces.gcr.igcr import (
     IGCR2SpinRestrictedParameterization,
     IGCR3Ansatz,
     IGCR3SpinRestrictedParameterization,
-    IGCR3SpinRestrictedSpec,
     IGCR4Ansatz,
     IGCR4SpinRestrictedParameterization,
-    IGCR4SpinRestrictedSpec,
     IGCRSpinRestrictedParameterization,
     layered_igcr2_from_ccsd_t_amplitudes,
     reduce_spin_restricted,
@@ -30,7 +28,12 @@ from xquces.gcr.igcr import (
     relabel_igcr3_ansatz_orbitals,
     relabel_igcr4_ansatz_orbitals,
 )
-from xquces.gcr.canonical import IGCRAnsatz
+from xquces.gcr.canonical import IGCRAnsatz, IGCRDiagonalCoefficients
+from xquces.gcr.canonical_lift import (
+    lift_igcr2_to_igcr3,
+    lift_igcr2_to_igcr4,
+    lift_igcr3_to_igcr4,
+)
 from xquces.gcr.model import gcr_from_ucj_ansatz
 from xquces.gcr.utils import (
     _default_eta_indices,
@@ -896,16 +899,22 @@ class PairUCCDIGCRParameterization(_PairUCCDReferenceMixin):
         if self.order == 2:
             if self.reference_kind == "product" and self.layers != 1:
                 return None
-            return _igcr2_product_ansatz_from_ucj(ansatz, self.nocc)
+            return IGCRAnsatz.from_legacy(
+                _igcr2_product_ansatz_from_ucj(ansatz, self.nocc),
+                order=2,
+            )
         if self.reference_kind == "product":
-            igcr2 = _igcr2_product_ansatz_from_ucj(ansatz, self.nocc)
+            igcr2 = IGCRAnsatz.from_legacy(
+                _igcr2_product_ansatz_from_ucj(ansatz, self.nocc),
+                order=2,
+            )
             if self.order == 3:
-                return IGCR3Ansatz.from_igcr2_ansatz(
+                return lift_igcr2_to_igcr3(
                     igcr2,
                     tau_scale=self.tau_seed_scale,
                     omega_scale=self.omega_seed_scale,
                 )
-            return IGCR4Ansatz.from_igcr2_ansatz(
+            return lift_igcr2_to_igcr4(
                 igcr2,
                 tau_scale=self.tau_seed_scale,
                 omega_scale=self.omega_seed_scale,
@@ -913,16 +922,21 @@ class PairUCCDIGCRParameterization(_PairUCCDReferenceMixin):
                 rho_scale=self.rho_seed_scale,
                 sigma_scale=self.sigma_seed_scale,
             )
-        if self.order == 3:
-            return IGCR3Ansatz.from_ucj_ansatz(
-                ansatz,
+        igcr2 = IGCRAnsatz.from_legacy(
+            IGCR2Ansatz.from_gcr_ansatz(
+                gcr_from_ucj_ansatz(ansatz),
                 nocc=self.nocc,
+            ),
+            order=2,
+        )
+        if self.order == 3:
+            return lift_igcr2_to_igcr3(
+                igcr2,
                 tau_scale=self.tau_seed_scale,
                 omega_scale=self.omega_seed_scale,
             )
-        return IGCR4Ansatz.from_ucj_ansatz(
-            ansatz,
-            nocc=self.nocc,
+        return lift_igcr2_to_igcr4(
+            igcr2,
             tau_scale=self.tau_seed_scale,
             omega_scale=self.omega_seed_scale,
             eta_scale=self.eta_seed_scale,
@@ -938,23 +952,26 @@ class PairUCCDIGCRParameterization(_PairUCCDReferenceMixin):
         scale: float = 0.5,
         **df_options,
     ) -> np.ndarray:
-        igcr2 = layered_igcr2_from_ccsd_t_amplitudes(
-            t2,
-            t1=t1,
-            layers=self.layers if self.order == 2 else 1,
-            nocc=self.nocc,
-            **df_options,
+        igcr2 = IGCRAnsatz.from_legacy(
+            layered_igcr2_from_ccsd_t_amplitudes(
+                t2,
+                t1=t1,
+                layers=self.layers if self.order == 2 else 1,
+                nocc=self.nocc,
+                **df_options,
+            ),
+            order=2,
         )
         if self.order == 2:
             ansatz = igcr2
         elif self.order == 3:
-            ansatz = IGCR3Ansatz.from_igcr2_ansatz(
+            ansatz = lift_igcr2_to_igcr3(
                 igcr2,
                 tau_scale=self.tau_seed_scale,
                 omega_scale=self.omega_seed_scale,
             )
         else:
-            ansatz = IGCR4Ansatz.from_igcr2_ansatz(
+            ansatz = lift_igcr2_to_igcr4(
                 igcr2,
                 tau_scale=self.tau_seed_scale,
                 omega_scale=self.omega_seed_scale,
@@ -1019,27 +1036,42 @@ class PairUCCDIGCRParameterization(_PairUCCDReferenceMixin):
                     "GCR-3 nested lift requires a GCR-2 source ansatz, "
                     f"got order {source_generic.order!r}."
                 )
-            source_igcr2 = source_generic.to_igcr2_ansatz()
-            pair = source_igcr2.diagonal.to_standard().pair_params
-            tau_direction, omega_direction = _triples_lift_from_pair_matrix(pair)
+            baseline = lift_igcr2_to_igcr3(
+                source_generic,
+                tau_scale=0.0,
+                omega_scale=0.0,
+            )
+            directions = tuple(
+                _triples_lift_from_pair_matrix(d.to_order(2).pair_matrix())
+                for d in source_generic.diagonals
+            )
 
             def params_from_weights(weights: np.ndarray) -> np.ndarray:
                 weights = np.asarray(weights, dtype=np.float64)
-                ansatz = IGCR3Ansatz.from_igcr2_ansatz(
-                    source_igcr2,
-                    tau_scale=0.0,
-                    omega_scale=0.0,
-                )
-                diagonal = IGCR3SpinRestrictedSpec.from_igcr2_diagonal(
-                    source_igcr2.diagonal,
-                    tau=weights[0] * tau_direction,
-                    omega_values=weights[1] * omega_direction,
-                )
-                ansatz = IGCR3Ansatz(
-                    diagonal=diagonal,
-                    left=np.asarray(ansatz.left, dtype=np.complex128),
-                    right=np.asarray(ansatz.right, dtype=np.complex128),
-                    nocc=ansatz.nocc,
+                diagonals = []
+                for diagonal, (tau_direction, omega_direction) in zip(
+                    baseline.diagonals,
+                    directions,
+                ):
+                    d3 = diagonal.to_order(3)
+                    diagonals.append(
+                        IGCRDiagonalCoefficients(
+                            order=3,
+                            norb=d3.norb,
+                            double_params=d3.full_double(),
+                            pair_values=d3.pair_values,
+                            tau=weights[0] * tau_direction,
+                            omega_values=weights[1] * omega_direction,
+                            eta_values=d3.eta_vector(),
+                            rho_values=d3.rho_vector(),
+                            sigma_values=d3.sigma_vector(),
+                        )
+                    )
+                ansatz = IGCRAnsatz(
+                    order=3,
+                    diagonals=tuple(diagonals),
+                    rotations=baseline.rotations,
+                    nocc=baseline.nocc,
                 )
                 return _combined_seed(
                     reference_params,
@@ -1059,38 +1091,48 @@ class PairUCCDIGCRParameterization(_PairUCCDReferenceMixin):
             return info if return_info else info.params
 
         if source_generic.order == 2:
-            source_generic = IGCRAnsatz.from_legacy(
-                IGCR3Ansatz.from_igcr2_ansatz(
-                    source_generic.to_igcr2_ansatz(),
-                    tau_scale=0.0,
-                    omega_scale=0.0,
-                ),
-                order=3,
+            source_generic = lift_igcr2_to_igcr3(
+                source_generic,
+                tau_scale=0.0,
+                omega_scale=0.0,
             )
         if source_generic.order != 3:
             raise TypeError(
                 "GCR-4 nested lift requires a GCR-2 or GCR-3 source ansatz, "
                 f"got order {source_generic.order!r}."
             )
-        source_igcr3 = source_generic.to_igcr3_ansatz()
-        pair = source_igcr3.diagonal.pair_matrix()
-        eta_direction, rho_direction, sigma_direction = _quartic_lift_from_pair_matrix(
-            pair
+        directions = tuple(
+            _quartic_lift_from_pair_matrix(d.to_order(3).pair_matrix())
+            for d in source_generic.diagonals
         )
 
         def params_from_weights(weights: np.ndarray) -> np.ndarray:
             weights = np.asarray(weights, dtype=np.float64)
-            diagonal = IGCR4SpinRestrictedSpec.from_igcr3_diagonal(
-                source_igcr3.diagonal,
-                eta_values=weights[0] * eta_direction,
-                rho_values=weights[1] * rho_direction,
-                sigma_values=weights[2] * sigma_direction,
-            )
-            ansatz = IGCR4Ansatz(
-                diagonal=diagonal,
-                left=np.asarray(source_igcr3.left, dtype=np.complex128),
-                right=np.asarray(source_igcr3.right, dtype=np.complex128),
-                nocc=source_igcr3.nocc,
+            diagonals = []
+            for diagonal, (
+                eta_direction,
+                rho_direction,
+                sigma_direction,
+            ) in zip(source_generic.diagonals, directions):
+                d4 = diagonal.to_order(4)
+                diagonals.append(
+                    IGCRDiagonalCoefficients(
+                        order=4,
+                        norb=d4.norb,
+                        double_params=d4.full_double(),
+                        pair_values=d4.pair_values,
+                        tau=d4.tau_matrix(),
+                        omega_values=d4.omega_vector(),
+                        eta_values=weights[0] * eta_direction,
+                        rho_values=weights[1] * rho_direction,
+                        sigma_values=weights[2] * sigma_direction,
+                    )
+                )
+            ansatz = IGCRAnsatz(
+                order=4,
+                diagonals=tuple(diagonals),
+                rotations=source_generic.rotations,
+                nocc=source_generic.nocc,
             )
             return _combined_seed(
                 reference_params,
@@ -1508,14 +1550,14 @@ def _convert_ansatz_for_product_transfer(parameterization, ansatz):
         if isinstance(ansatz, IGCR3Ansatz):
             return ansatz
         if isinstance(ansatz, IGCR2Ansatz):
-            return IGCR3Ansatz.from_igcr2_ansatz(ansatz)
+            return lift_igcr2_to_igcr3(ansatz).to_legacy()
     if order == 4:
         if isinstance(ansatz, IGCR4Ansatz):
             return ansatz
         if isinstance(ansatz, IGCR3Ansatz):
-            return IGCR4Ansatz.from_igcr3_ansatz(ansatz)
+            return lift_igcr3_to_igcr4(ansatz).to_legacy()
         if isinstance(ansatz, IGCR2Ansatz):
-            return IGCR4Ansatz.from_igcr2_ansatz(ansatz)
+            return lift_igcr2_to_igcr4(ansatz).to_legacy()
     raise TypeError(
         f"Unsupported ansatz transfer to {type(parameterization)!r} from {type(ansatz)!r}"
     )

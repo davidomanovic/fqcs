@@ -18,7 +18,17 @@ from xquces.gcr import (
     IGCR4SpinRestrictedParameterization,
     IGCR4SpinRestrictedSpec,
 )
+from xquces.gcr.canonical_lift import (
+    lift_igcr2_to_igcr3,
+    lift_igcr2_to_igcr4,
+    lift_igcr3_to_igcr4,
+)
 from xquces.gcr.canonical_layering import as_layered_igcr_ansatz
+from xquces.gcr.igcr import (
+    igcr3_from_igcr2_ansatz,
+    igcr4_from_igcr2_ansatz,
+    igcr4_from_igcr3_ansatz,
+)
 from xquces.states import hartree_fock_state
 
 
@@ -305,6 +315,152 @@ def test_igcr2_spin_balanced_parameterization_remains_legacy_only():
 
     assert isinstance(ansatz, IGCR2Ansatz)
     assert ansatz.is_spin_balanced
+
+
+def test_canonical_lift_igcr2_to_igcr3_matches_legacy_constructor():
+    rng = np.random.default_rng(303)
+    norb = 4
+    nocc = 2
+    nelec = (nocc, nocc)
+    pair = rng.normal(scale=0.02, size=(norb, norb))
+    pair = 0.5 * (pair + pair.T)
+    np.fill_diagonal(pair, 0.0)
+    ansatz = IGCR2Ansatz(
+        diagonal=IGCR2SpinRestrictedSpec(pair=pair),
+        left=_random_unitary(rng, norb),
+        right=_random_unitary(rng, norb),
+        nocc=nocc,
+    )
+
+    lifted = lift_igcr2_to_igcr3(
+        ansatz.to_generic(),
+        tau_scale=0.7,
+        omega_scale=-0.3,
+    )
+    expected = IGCR3Ansatz.from_igcr2_ansatz(
+        ansatz,
+        tau_scale=0.7,
+        omega_scale=-0.3,
+    )
+    public = igcr3_from_igcr2_ansatz(
+        ansatz,
+        tau_scale=0.7,
+        omega_scale=-0.3,
+    )
+
+    ref = hartree_fock_state(norb, nelec)
+    np.testing.assert_allclose(
+        lifted.apply(ref, nelec),
+        expected.apply(ref, nelec),
+        atol=1e-12,
+    )
+    np.testing.assert_allclose(
+        public.apply(ref, nelec),
+        expected.apply(ref, nelec),
+        atol=1e-12,
+    )
+
+
+def test_canonical_lift_igcr3_to_igcr4_matches_legacy_constructor():
+    rng = np.random.default_rng(404)
+    norb = 4
+    nocc = 2
+    nelec = (nocc, nocc)
+    ansatz = IGCR3Ansatz(
+        diagonal=IGCR3SpinRestrictedSpec(
+            double_params=rng.normal(scale=0.01, size=norb),
+            pair_values=rng.normal(scale=0.01, size=6),
+            tau=rng.normal(scale=0.01, size=(norb, norb)),
+            omega_values=rng.normal(scale=0.01, size=4),
+        ),
+        left=_random_unitary(rng, norb),
+        right=_random_unitary(rng, norb),
+        nocc=nocc,
+    )
+
+    lifted = lift_igcr3_to_igcr4(
+        ansatz.to_generic(),
+        eta_scale=0.5,
+        rho_scale=-0.25,
+        sigma_scale=0.125,
+    )
+    expected = IGCR4Ansatz.from_igcr3_ansatz(
+        ansatz,
+        eta_scale=0.5,
+        rho_scale=-0.25,
+        sigma_scale=0.125,
+    )
+    public = igcr4_from_igcr3_ansatz(
+        ansatz,
+        eta_scale=0.5,
+        rho_scale=-0.25,
+        sigma_scale=0.125,
+    )
+
+    ref = hartree_fock_state(norb, nelec)
+    np.testing.assert_allclose(
+        lifted.apply(ref, nelec),
+        expected.apply(ref, nelec),
+        atol=1e-12,
+    )
+    np.testing.assert_allclose(
+        public.apply(ref, nelec),
+        expected.apply(ref, nelec),
+        atol=1e-12,
+    )
+
+
+def test_canonical_lift_igcr2_to_igcr4_matches_legacy_constructor():
+    rng = np.random.default_rng(505)
+    norb = 4
+    nocc = 2
+    nelec = (nocc, nocc)
+    pair = rng.normal(scale=0.02, size=(norb, norb))
+    pair = 0.5 * (pair + pair.T)
+    np.fill_diagonal(pair, 0.0)
+    ansatz = IGCR2Ansatz(
+        diagonal=IGCR2SpinRestrictedSpec(pair=pair),
+        left=_random_unitary(rng, norb),
+        right=_random_unitary(rng, norb),
+        nocc=nocc,
+    )
+
+    lifted = lift_igcr2_to_igcr4(
+        ansatz.to_generic(),
+        tau_scale=0.7,
+        omega_scale=-0.3,
+        eta_scale=0.5,
+        rho_scale=-0.25,
+        sigma_scale=0.125,
+    )
+    expected = IGCR4Ansatz.from_igcr2_ansatz(
+        ansatz,
+        tau_scale=0.7,
+        omega_scale=-0.3,
+        eta_scale=0.5,
+        rho_scale=-0.25,
+        sigma_scale=0.125,
+    )
+    public = igcr4_from_igcr2_ansatz(
+        ansatz,
+        tau_scale=0.7,
+        omega_scale=-0.3,
+        eta_scale=0.5,
+        rho_scale=-0.25,
+        sigma_scale=0.125,
+    )
+
+    ref = hartree_fock_state(norb, nelec)
+    np.testing.assert_allclose(
+        lifted.apply(ref, nelec),
+        expected.apply(ref, nelec),
+        atol=1e-12,
+    )
+    np.testing.assert_allclose(
+        public.apply(ref, nelec),
+        expected.apply(ref, nelec),
+        atol=1e-12,
+    )
 
 
 def test_igcr3_parameterization_returns_legacy_via_generic_builders():

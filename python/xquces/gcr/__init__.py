@@ -37,6 +37,11 @@ from xquces.gcr.igcr import (
     random_parameters,
 )
 from xquces.gcr.canonical import IGCRAnsatz, IGCRDiagonalCoefficients
+from xquces.gcr.canonical_lift import (
+    lift_igcr2_to_igcr3,
+    lift_igcr2_to_igcr4,
+    lift_igcr3_to_igcr4,
+)
 from xquces.gcr.canonical_transform import (
     relabel_igcr_ansatz_orbitals,
     transport_igcr_ansatz_orbitals,
@@ -89,6 +94,9 @@ __all__ = [
     "GCRAnsatz",
     "IGCRAnsatz",
     "IGCRDiagonalCoefficients",
+    "lift_igcr2_to_igcr3",
+    "lift_igcr2_to_igcr4",
+    "lift_igcr3_to_igcr4",
     "GCR2ProductPairUCCDParameterization",
     "GCR3ProductPairUCCDParameterization",
     "GCR4ProductPairUCCDParameterization",
