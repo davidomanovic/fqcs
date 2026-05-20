@@ -65,9 +65,9 @@ def _jacobian_factory(
 ) -> Callable[[np.ndarray], np.ndarray]:
     nelec = (parameterization.nocc, parameterization.nocc)
     try:
-        from xquces.gcr.restricted_jacobian import make_restricted_gcr_jacobian
+        from xquces.ansatz.jacobian import make_state_jacobian
 
-        return make_restricted_gcr_jacobian(parameterization, reference, nelec)
+        return make_state_jacobian(parameterization, reference, nelec)
     except Exception:
         return _finite_difference_jacobian(parameterization, reference, finite_difference_step)
 
@@ -347,4 +347,3 @@ def install_metric_conditioned_initializer() -> None:
         return
     setattr(cls, "_xquces_unconditioned_parameters_from_t_amplitudes", cls.parameters_from_t_amplitudes)
     setattr(cls, "parameters_from_t_amplitudes", _metric_conditioned_parameters_from_t_amplitudes)
-

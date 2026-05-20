@@ -10,7 +10,6 @@ def scale_igcr_diagonal(
     scale: float,
 ) -> IGCRDiagonalCoefficients:
     """Scale all active coefficient sectors of one canonical diagonal layer."""
-
     return IGCRDiagonalCoefficients(
         order=diagonal.order,
         norb=diagonal.norb,
@@ -30,19 +29,6 @@ def as_layered_igcr_ansatz(
     *,
     order: int | None = None,
 ) -> IGCRAnsatz:
-    """Return a canonical iGCR ansatz with exactly ``layers`` diagonal layers.
-
-    This is the shared replacement for the order-specific spin-restricted
-    ``_as_layered_igcr*`` helpers.  It preserves the old embedding semantics:
-
-    * an already-layered ansatz with fewer layers is padded by zero diagonal
-      layers immediately before the final rotation;
-    * a one-layer ansatz embedded into multiple layers is represented by
-      splitting the diagonal coefficients evenly across the target layers and
-      inserting identity middle rotations;
-    * exact compression from more layers to fewer layers is rejected.
-    """
-
     if int(layers) != layers or layers < 1:
         raise ValueError("layers must be a positive integer")
     layers = int(layers)

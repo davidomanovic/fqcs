@@ -320,20 +320,6 @@ def generate_gcr2_pair_uccd_pass_manager(
     readout_error_threshold: float = 0.10,
     **qiskit_pm_kwargs: Any,
 ) -> GCR2PairUCCDPassManagerResult:
-    """Build a backend-aware pass manager for GCR-2 on a product pair-UCCD reference.
-
-    The logical register is assumed to use alpha-first, beta-second Jordan-Wigner
-    ordering.  The initial layout places alpha and beta orbitals on two hardware
-    paths, then adds prioritized alpha-beta contacts.  On square topologies these
-    contacts are direct edges.  On heavy-hex topologies they are embedded through
-    physical bridge qubits, matching the device degree constraints while keeping
-    the logical circuit on ``2 * norb`` qubits.
-
-    The returned pass manager runs the xquces pre-init stage, then Qiskit's preset
-    pipeline with the selected initial layout, and finally re-enables VF2 post-layout
-    so that the compiler can still choose a lower-noise isomorphic embedding after
-    routing.
-    """
     norb = int(norb)
     if norb <= 0:
         raise ValueError("norb must be positive")

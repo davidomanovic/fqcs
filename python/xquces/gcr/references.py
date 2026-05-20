@@ -6,10 +6,10 @@ from typing import Callable
 import numpy as np
 
 from xquces.ansatz.blocks import parameter_blocks, parameter_view
-from xquces.gcr.restricted_jacobian import (
-    make_restricted_gcr_jacobian,
-    make_restricted_gcr_subspace_jacobian,
-    make_restricted_gcr_vjp,
+from xquces.ansatz.jacobian import (
+    make_state_jacobian,
+    make_state_subspace_jacobian,
+    make_state_vjp,
 )
 from xquces.states import hartree_fock_state
 
@@ -203,7 +203,7 @@ class FixedReferenceAnsatzParameterization:
         params = np.asarray(params, dtype=np.float64)
         if params.shape != (self.n_params,):
             raise ValueError(f"Expected {(self.n_params,)}, got {params.shape}.")
-        return make_restricted_gcr_jacobian(
+        return make_state_jacobian(
             self.ansatz_parameterization,
             self.reference_state,
             self.nelec,
@@ -223,7 +223,7 @@ class FixedReferenceAnsatzParameterization:
                 f"directions must have shape ({self.n_params}, m); got "
                 f"{directions.shape}."
             )
-        return make_restricted_gcr_subspace_jacobian(
+        return make_state_subspace_jacobian(
             self.ansatz_parameterization,
             self.reference_state,
             self.nelec,
@@ -241,7 +241,7 @@ class FixedReferenceAnsatzParameterization:
         Hpsi = H @ psi
         energy = float(np.vdot(psi, Hpsi).real)
         residual = Hpsi - energy * psi
-        grad = make_restricted_gcr_vjp(
+        grad = make_state_vjp(
             self.ansatz_parameterization,
             self.reference_state,
             self.nelec,
@@ -415,7 +415,7 @@ def make_composite_reference_ansatz_vjp(
         )
         n_ansatz = parameterization.n_ansatz_params
         if n_ansatz:
-            grad_ansatz = make_restricted_gcr_vjp(
+            grad_ansatz = make_state_vjp(
                 ansatz_parameterization, reference_state, nelec
             )(ansatz_params, v)
         else:
@@ -463,7 +463,7 @@ def make_composite_reference_ansatz_jacobian(
         else:
             ref_block = np.zeros((reference_state.size, 0), dtype=np.complex128)
 
-        ansatz_block = make_restricted_gcr_jacobian(
+        ansatz_block = make_state_jacobian(
             ansatz_parameterization,
             reference_state,
             nelec,
@@ -522,7 +522,7 @@ def make_composite_reference_ansatz_subspace_jacobian(
                 )
 
         if ansatz_dirs.size and np.any(ansatz_dirs):
-            out += make_restricted_gcr_subspace_jacobian(
+            out += make_state_subspace_jacobian(
                 ansatz_parameterization,
                 reference_state,
                 nelec,

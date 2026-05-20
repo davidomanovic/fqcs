@@ -31,8 +31,6 @@ def IGCR(
     backend: Literal["legacy", "sequence"] = "legacy",
     **kwargs,
 ):
-    """Construct an iGCR parameterization without naming a concrete class."""
-
     order = int(order)
     if backend not in {"legacy", "sequence"}:
         raise ValueError("backend must be 'legacy' or 'sequence'")
