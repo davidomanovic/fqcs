@@ -13,10 +13,11 @@ from qiskit.circuit import (
     Qubit,
 )
 
-from xquces.gcr.igcr import (
+from xquces.gcr.canonical import IGCRAnsatz
+from xquces.gcr.igcr import IGCR2SpinBalancedSpec
+from xquces.gcr.restricted_model import (
     IGCR2Ansatz,
     IGCR2LayeredAnsatz,
-    IGCR2SpinBalancedSpec,
     IGCR2SpinRestrictedSpec,
 )
 from xquces.gcr.utils import (
@@ -32,7 +33,17 @@ from xquces.qiskit.gates.diag_2 import (
 )
 from xquces.qiskit.gates.orbital_rotations import OrbitalRotationJW
 
-IGCR2CircuitAnsatz = IGCR2Ansatz | IGCR2LayeredAnsatz
+IGCR2CircuitAnsatz = IGCR2Ansatz | IGCR2LayeredAnsatz | IGCRAnsatz
+
+
+def _as_igcr2_circuit_ansatz(
+    ansatz: IGCR2CircuitAnsatz,
+) -> IGCR2Ansatz | IGCR2LayeredAnsatz:
+    if isinstance(ansatz, IGCRAnsatz):
+        if ansatz.order != 2:
+            raise TypeError("expected a canonical iGCR-2 ansatz")
+        return ansatz.to_igcr2_ansatz()
+    return ansatz
 
 
 def _iter_upper_pairs(norb: int) -> list[tuple[int, int]]:
@@ -239,6 +250,7 @@ class IGCR2JW(Gate):
         sparsify_diagonal: bool = True,
         sparsify_atol: float = 1e-12,
     ):
+        ansatz = _as_igcr2_circuit_ansatz(ansatz)
         self.ansatz = ansatz
         self.validate_orbital_rotations = bool(validate_orbital_rotations)
         self.sparsify_diagonal = bool(sparsify_diagonal)
@@ -297,6 +309,7 @@ def igcr2_stateprep_jw_circuit(
     its occupied columns instead of implementing it as a generic orbital rotation
     on an arbitrary input state.
     """
+    ansatz = _as_igcr2_circuit_ansatz(ansatz)
     circuit = QuantumCircuit(2 * ansatz.norb)
     for instruction in _igcr2_stateprep_jw(
         circuit.qubits,
@@ -317,6 +330,7 @@ def _igcr2_jw(
     sparsify_diagonal: bool,
     sparsify_atol: float,
 ) -> Iterator[CircuitInstruction]:
+    ansatz = _as_igcr2_circuit_ansatz(ansatz)
     if len(qubits) != 2 * ansatz.norb:
         raise ValueError("Expected 2 * ansatz.norb qubits.")
 
@@ -360,6 +374,7 @@ def _igcr2_stateprep_jw(
     sparsify_diagonal: bool,
     sparsify_atol: float,
 ) -> Iterator[CircuitInstruction]:
+    ansatz = _as_igcr2_circuit_ansatz(ansatz)
     if len(qubits) != 2 * ansatz.norb:
         raise ValueError("Expected 2 * ansatz.norb qubits.")
 
@@ -403,6 +418,7 @@ def _igcr2_circuit_layers(
     sparsify_diagonal: bool,
     sparsify_atol: float,
 ):
+    ansatz = _as_igcr2_circuit_ansatz(ansatz)
     if isinstance(ansatz, IGCR2Ansatz):
         right, left, diagonal, emit_one_body_phase = _igcr2_circuit_factors(
             ansatz,
@@ -417,7 +433,7 @@ def _igcr2_circuit_layers(
     if isinstance(ansatz, IGCR2LayeredAnsatz):
         if ansatz.is_spin_balanced and sparsify_diagonal:
             # The spin-balanced sparsifying gauge moves one-body phases into the
-            # neighboring orbital rotations.  In a multilayer circuit that gauge
+            # neighboring orbital rotations. In a multilayer circuit that gauge
             # has to be applied per internal edge, so keep the exact raw
             # diagonal representative for now.
             sparsify_diagonal = False

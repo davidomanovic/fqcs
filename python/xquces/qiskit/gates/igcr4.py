@@ -12,11 +12,22 @@ from qiskit.circuit import (
     Qubit,
 )
 
-from xquces.gcr.igcr import IGCR4Ansatz, IGCR4LayeredAnsatz
+from xquces.gcr.canonical import IGCRAnsatz
+from xquces.gcr.restricted_model import IGCR4Ansatz, IGCR4LayeredAnsatz
 from xquces.qiskit.gates.diag_4 import Diag4SpinRestrictedJW
 from xquces.qiskit.gates.orbital_rotations import OrbitalRotationJW
 
-IGCR4CircuitAnsatz = IGCR4Ansatz | IGCR4LayeredAnsatz
+IGCR4CircuitAnsatz = IGCR4Ansatz | IGCR4LayeredAnsatz | IGCRAnsatz
+
+
+def _as_igcr4_circuit_ansatz(
+    ansatz: IGCR4CircuitAnsatz,
+) -> IGCR4Ansatz | IGCR4LayeredAnsatz:
+    if isinstance(ansatz, IGCRAnsatz):
+        if ansatz.order != 4:
+            raise TypeError("expected a canonical iGCR-4 ansatz")
+        return ansatz.to_igcr4_ansatz()
+    return ansatz
 
 
 class IGCR4JW(Gate):
@@ -31,6 +42,7 @@ class IGCR4JW(Gate):
         diagonal_synthesis: str = "phase_polynomial",
         diagonal_threshold: float = 0.0,
     ):
+        ansatz = _as_igcr4_circuit_ansatz(ansatz)
         self.ansatz = ansatz
         self.validate_orbital_rotations = bool(validate_orbital_rotations)
         self.diagonal_synthesis = diagonal_synthesis
@@ -79,6 +91,7 @@ def igcr4_stateprep_jw_circuit(
     diagonal_synthesis: str = "phase_polynomial",
     diagonal_threshold: float = 0.0,
 ) -> QuantumCircuit:
+    ansatz = _as_igcr4_circuit_ansatz(ansatz)
     circuit = QuantumCircuit(2 * ansatz.norb)
     for instruction in _igcr4_stateprep_jw(
         circuit.qubits,
@@ -99,6 +112,7 @@ def _igcr4_jw(
     diagonal_synthesis: str,
     diagonal_threshold: float,
 ) -> Iterator[CircuitInstruction]:
+    ansatz = _as_igcr4_circuit_ansatz(ansatz)
     if len(qubits) != 2 * ansatz.norb:
         raise ValueError("Expected 2 * ansatz.norb qubits.")
 
@@ -137,6 +151,7 @@ def _igcr4_stateprep_jw(
     diagonal_synthesis: str,
     diagonal_threshold: float,
 ) -> Iterator[CircuitInstruction]:
+    ansatz = _as_igcr4_circuit_ansatz(ansatz)
     if len(qubits) != 2 * ansatz.norb:
         raise ValueError("Expected 2 * ansatz.norb qubits.")
 
@@ -170,6 +185,7 @@ def _igcr4_stateprep_jw(
 
 
 def _igcr4_circuit_layers(ansatz: IGCR4CircuitAnsatz):
+    ansatz = _as_igcr4_circuit_ansatz(ansatz)
     if isinstance(ansatz, IGCR4Ansatz):
         return (
             (

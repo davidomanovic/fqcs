@@ -7,12 +7,15 @@ from ffsim.qiskit.gates import PrepareHartreeFockJW, PrepareSlaterDeterminantSpi
 from qiskit.circuit import CircuitInstruction, Gate, QuantumCircuit, QuantumRegister, Qubit
 from qiskit.circuit.library import CXGate, SwapGate, UnitaryGate, XGate, XXPlusYYGate
 
-from xquces.gcr.igcr import (
+from xquces.gcr.canonical import IGCRAnsatz
+from xquces.gcr.canonical_transform import relabel_legacy_igcr_ansatz_orbitals
+from xquces.gcr.restricted_model import (
     IGCR2Ansatz,
     IGCR2LayeredAnsatz,
     IGCR3Ansatz,
+    IGCR3LayeredAnsatz,
     IGCR4Ansatz,
-    relabel_igcr2_ansatz_orbitals,
+    IGCR4LayeredAnsatz,
 )
 from xquces.gcr.product_pair_uccd import (
     _pair_uccd_ov_pairs,
@@ -21,6 +24,22 @@ from xquces.gcr.product_pair_uccd import (
 from xquces.qiskit.gates.igcr2 import IGCR2JW
 from xquces.qiskit.gates.igcr3 import IGCR3JW
 from xquces.qiskit.gates.igcr4 import IGCR4JW
+
+IGCRCircuitAnsatz = (
+    IGCR2Ansatz
+    | IGCR2LayeredAnsatz
+    | IGCR3Ansatz
+    | IGCR3LayeredAnsatz
+    | IGCR4Ansatz
+    | IGCR4LayeredAnsatz
+    | IGCRAnsatz
+)
+
+
+def _as_legacy_igcr_ansatz(ansatz: IGCRCircuitAnsatz):
+    if isinstance(ansatz, IGCRAnsatz):
+        return ansatz.to_legacy()
+    return ansatz
 
 
 def _normalize_nelec(nelec: tuple[int, int] | Sequence[int]) -> tuple[int, int]:
@@ -226,7 +245,7 @@ def product_pair_uccd_pair_register_stateprep_jw_circuit(
 
 
 def product_pair_uccd_igcr_stateprep_jw_circuit(
-    ansatz: IGCR2Ansatz | IGCR2LayeredAnsatz | IGCR3Ansatz | IGCR4Ansatz,
+    ansatz: IGCRCircuitAnsatz,
     reference_params: np.ndarray,
     *,
     nelec: tuple[int, int] | Sequence[int] | None = None,
@@ -236,6 +255,7 @@ def product_pair_uccd_igcr_stateprep_jw_circuit(
     sparsify_atol: float = 1e-12,
     puccd_strategy: str = "pair_register",
 ) -> QuantumCircuit:
+    ansatz = _as_legacy_igcr_ansatz(ansatz)
     if nelec is None:
         nelec = (ansatz.nocc, ansatz.nocc)
     nelec = _normalize_nelec(nelec)
@@ -257,9 +277,10 @@ def product_pair_uccd_igcr_stateprep_jw_circuit(
         )
         for instruction in instructions:
             circuit.append(instruction)
-        relabeled = relabel_igcr2_ansatz_orbitals(
+        relabeled = relabel_legacy_igcr_ansatz_orbitals(
             ansatz,
             np.asarray(old_for_new, dtype=np.int64),
+            order=2,
         )
         circuit.append(
             _igcr_gate_from_ansatz(
@@ -517,12 +538,13 @@ def _normalize_stateprep_strategy(strategy: str) -> str:
 
 
 def _igcr_gate_from_ansatz(
-    ansatz: IGCR2Ansatz | IGCR2LayeredAnsatz | IGCR3Ansatz | IGCR4Ansatz,
+    ansatz: IGCRCircuitAnsatz,
     *,
     validate_orbital_rotations: bool,
     sparsify_diagonal: bool,
     sparsify_atol: float,
 ) -> Gate:
+    ansatz = _as_legacy_igcr_ansatz(ansatz)
     if isinstance(ansatz, (IGCR2Ansatz, IGCR2LayeredAnsatz)):
         return IGCR2JW(
             ansatz,
@@ -530,16 +552,16 @@ def _igcr_gate_from_ansatz(
             sparsify_diagonal=sparsify_diagonal,
             sparsify_atol=sparsify_atol,
         )
-    if isinstance(ansatz, IGCR3Ansatz):
+    if isinstance(ansatz, (IGCR3Ansatz, IGCR3LayeredAnsatz)):
         return IGCR3JW(
             ansatz,
             validate_orbital_rotations=validate_orbital_rotations,
         )
-    if isinstance(ansatz, IGCR4Ansatz):
+    if isinstance(ansatz, (IGCR4Ansatz, IGCR4LayeredAnsatz)):
         return IGCR4JW(
             ansatz,
             validate_orbital_rotations=validate_orbital_rotations,
         )
     raise TypeError(
-        "ansatz must be an IGCR2Ansatz, IGCR2LayeredAnsatz, IGCR3Ansatz, or IGCR4Ansatz"
+        "ansatz must be a canonical IGCRAnsatz or a legacy iGCR ansatz"
     )
