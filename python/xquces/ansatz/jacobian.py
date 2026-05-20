@@ -41,7 +41,7 @@ def _restricted_jacobian_factory(
 
     if not isinstance(parameterization, IGCRSpinRestrictedParameterization):
         return None
-    from xquces.gcr.restricted_jacobian import make_restricted_gcr_jacobian
+    from xquces.jacobian.restricted_igcr import make_restricted_gcr_jacobian
 
     return make_restricted_gcr_jacobian(parameterization, reference_vec, nelec)
 
@@ -55,7 +55,7 @@ def _restricted_vjp_factory(
 
     if not isinstance(parameterization, IGCRSpinRestrictedParameterization):
         return None
-    from xquces.gcr.restricted_jacobian import make_restricted_gcr_vjp
+    from xquces.jacobian.restricted_igcr import make_restricted_gcr_vjp
 
     return make_restricted_gcr_vjp(parameterization, reference_vec, nelec)
 
@@ -69,7 +69,7 @@ def _restricted_subspace_jacobian_factory(
 
     if not isinstance(parameterization, IGCRSpinRestrictedParameterization):
         return None
-    from xquces.gcr.restricted_jacobian import make_restricted_gcr_subspace_jacobian
+    from xquces.jacobian.restricted_igcr import make_restricted_gcr_subspace_jacobian
 
     return make_restricted_gcr_subspace_jacobian(parameterization, reference_vec, nelec)
 
@@ -130,7 +130,7 @@ def make_state_jacobian(
     """Return a state Jacobian factory for a supported parameterization.
 
     This is the canonical dispatch layer. The existing spin-restricted iGCR
-    analytic implementation remains in ``xquces.gcr.restricted_jacobian`` as a
+    analytic implementation lives in ``xquces.jacobian.restricted_igcr`` as a
     backend, while higher-level callers use this function.
     """
 

@@ -14,6 +14,9 @@ from xquces.gcr.restricted_jacobian import (
     make_restricted_gcr_subspace_jacobian,
     make_restricted_gcr_vjp,
 )
+from xquces.jacobian.restricted_igcr import (
+    make_restricted_gcr_jacobian as make_restricted_gcr_jacobian_backend,
+)
 from xquces.states import hartree_fock_state
 
 
@@ -118,3 +121,6 @@ def test_unsupported_sequence_jacobian_has_clear_error():
     with pytest.raises(NotImplementedError, match="Gate-sequence state Jacobian"):
         make_state_jacobian(sequence, np.ones(1, dtype=np.complex128), (0, 0))
 
+
+def test_legacy_restricted_jacobian_facade_points_to_backend():
+    assert make_restricted_gcr_jacobian is make_restricted_gcr_jacobian_backend
