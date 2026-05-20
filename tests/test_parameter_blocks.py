@@ -398,14 +398,44 @@ def test_igcr_sequence_backend_is_opt_in_and_rejects_unsupported_cases():
         GateSequenceParameterization,
     )
 
-    with pytest.raises(ValueError, match="layers=1"):
+    with pytest.raises(NotImplementedError, match="layers=1"):
         IGCR(order=2, norb=4, nocc=2, layers=2, backend="sequence")
-    with pytest.raises(ValueError, match="shared_diagonal"):
+    with pytest.raises(NotImplementedError, match="shared_diagonal"):
         IGCR(order=2, norb=4, nocc=2, shared_diagonal=True, backend="sequence")
-    with pytest.raises(ValueError, match="spin='restricted'"):
+    with pytest.raises(NotImplementedError, match="spin='restricted'"):
         IGCR(order=2, norb=4, nocc=2, spin="balanced", backend="sequence")
     with pytest.raises(ValueError, match="order must be 2, 3, or 4"):
         IGCR(order=5, norb=4, nocc=2, backend="sequence")
+
+
+def test_igcr_spin_restricted_to_gate_sequence_is_preset_sequence_source():
+    parameterization = IGCR(order=4, norb=4, nocc=2)
+    sequence = parameterization.to_gate_sequence()
+
+    assert isinstance(sequence, GateSequenceParameterization)
+    assert tuple(block.name for block in sequence.parameter_blocks()) == (
+        "left",
+        "diagonal.pair",
+        "diagonal.cubic",
+        "diagonal.quartic",
+        "right",
+    )
+
+
+def test_igcr_sequence_preset_uses_canonical_gate_sequence_method(monkeypatch):
+    calls = []
+    original = IGCRSpinRestrictedParameterization.to_gate_sequence
+
+    def spy(self):
+        calls.append(self.order)
+        return original(self)
+
+    monkeypatch.setattr(IGCRSpinRestrictedParameterization, "to_gate_sequence", spy)
+
+    sequence = IGCR(order=3, norb=4, nocc=2, backend="sequence")
+
+    assert isinstance(sequence, GateSequenceParameterization)
+    assert calls == [3]
 
 
 def test_ansatz_blocks_preserve_legacy_igcr_block_metadata():

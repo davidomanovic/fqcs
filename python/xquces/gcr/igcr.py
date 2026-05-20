@@ -764,6 +764,78 @@ class IGCRSpinRestrictedParameterization:
     def parameters_from_ansatz(self, ansatz: IGCRAnsatz | object) -> np.ndarray:
         return self._layered_core.parameters_from_ansatz(ansatz)
 
+    def to_gate_sequence(self):
+        if self.layers != 1:
+            raise NotImplementedError(
+                "Gate sequence view currently supports spin-restricted iGCR "
+                "with layers=1."
+            )
+        if self.shared_diagonal:
+            raise NotImplementedError(
+                "Gate sequence view currently supports shared_diagonal=False."
+            )
+        if self.order not in {2, 3, 4}:
+            raise NotImplementedError(
+                "Gate sequence view currently supports order 2, 3, or 4."
+            )
+
+        from xquces.ansatz import (
+            DiagonalCorrelatorGate,
+            GateSequenceParameterization,
+            OrbitalRotationGate,
+        )
+
+        def build(instances):
+            left, diagonal, final = instances
+            right = (
+                final
+                if self.order == 2
+                else _right_unitary_from_left_and_final(left, final, self.nocc)
+            )
+            if self.order == 2:
+                canonical_diagonal = IGCRDiagonalCoefficients.from_igcr2_spec(
+                    IGCR2SpinRestrictedSpec(pair=diagonal.pair)
+                )
+            elif self.order == 3:
+                canonical_diagonal = IGCRDiagonalCoefficients.from_igcr3_spec(
+                    IGCR3SpinRestrictedSpec(
+                        double_params=diagonal.double_params,
+                        pair_values=diagonal.pair_values,
+                        tau=diagonal.tau,
+                        omega_values=diagonal.omega_values,
+                    )
+                )
+            else:
+                canonical_diagonal = IGCRDiagonalCoefficients.from_igcr4_spec(
+                    IGCR4SpinRestrictedSpec(
+                        double_params=diagonal.double_params,
+                        pair_values=diagonal.pair_values,
+                        tau=diagonal.tau,
+                        omega_values=diagonal.omega_values,
+                        eta_values=diagonal.eta_values,
+                        rho_values=diagonal.rho_values,
+                        sigma_values=diagonal.sigma_values,
+                    )
+                )
+            return IGCRAnsatz(
+                order=self.order,
+                diagonals=(canonical_diagonal,),
+                rotations=(left, right),
+                nocc=self.nocc,
+            )
+
+        return GateSequenceParameterization(
+            gates=(
+                OrbitalRotationGate("left", self.left_orbital_chart, self.norb),
+                DiagonalCorrelatorGate("diagonal", self.diagonal_chart),
+                OrbitalRotationGate("right", self.right_orbital_chart, self.norb),
+            ),
+            ansatz_builder=build,
+            native_parameters_from_public=self._native_parameters_from_public,
+            ansatz_parameters_from_instance=self.parameters_from_ansatz,
+            default_nelec=(self.nocc, self.nocc),
+        )
+
     def parameters_from_igcr2_ansatz(
         self,
         ansatz: IGCRAnsatz | IGCR2Ansatz | IGCR2LayeredAnsatz,

@@ -2,24 +2,10 @@ from __future__ import annotations
 
 from typing import Literal
 
-from xquces.ansatz import (
-    DiagonalCorrelatorGate,
-    GateSequenceParameterization,
-    OrbitalRotationGate,
-)
 from xquces.gcr.charts import GCR2TraceFixedFullUnitaryChart
 from xquces.gcr.igcr import (
     IGCR2SpinBalancedParameterization,
     IGCRSpinRestrictedParameterization,
-    _right_unitary_from_left_and_final,
-)
-from xquces.gcr.restricted_model import (
-    IGCR2Ansatz,
-    IGCR2SpinRestrictedSpec,
-    IGCR3Ansatz,
-    IGCR3SpinRestrictedSpec,
-    IGCR4Ansatz,
-    IGCR4SpinRestrictedSpec,
 )
 from xquces.gcr.product_pair_uccd import (
     PairUCCDStateParameterization,
@@ -52,7 +38,9 @@ def IGCR(
         raise ValueError("backend must be 'legacy' or 'sequence'")
     if spin == "balanced":
         if backend == "sequence":
-            raise ValueError("sequence backend currently supports spin='restricted'")
+            raise NotImplementedError(
+                "sequence backend currently supports spin='restricted'"
+            )
         if order != 2:
             raise ValueError("spin-balanced iGCR presets currently support order=2")
         if layers != 1:
@@ -73,28 +61,6 @@ def IGCR(
     if spin != "restricted":
         raise ValueError("spin must be 'restricted' or 'balanced'")
 
-    if backend == "sequence":
-        if layers != 1:
-            raise ValueError("sequence backend currently supports layers=1")
-        if shared_diagonal:
-            raise ValueError("sequence backend does not use shared_diagonal")
-        legacy = IGCR(
-            order,
-            norb,
-            nocc,
-            layers=layers,
-            spin=spin,
-            reduced=reduced,
-            shared_diagonal=shared_diagonal,
-            left_chart=left_chart,
-            middle_chart=middle_chart,
-            right_chart=right_chart,
-            real_right_orbital_chart=real_right_orbital_chart,
-            backend="legacy",
-            **kwargs,
-        )
-        return _igcr_spin_restricted_gate_sequence(order, legacy)
-
     options = {
         "norb": norb,
         "nocc": nocc,
@@ -112,91 +78,10 @@ def IGCR(
         options["middle_orbital_chart"] = middle_chart
     if right_chart is not None:
         options["right_orbital_chart_override"] = right_chart
-    return IGCRSpinRestrictedParameterization(**options)
-
-
-def _igcr_spin_restricted_gate_sequence(
-    order: int,
-    legacy_parameterization,
-) -> GateSequenceParameterization:
-    order = int(order)
-    if order == 2:
-
-        def build(instances):
-            left, diagonal, right = instances
-            return IGCR2Ansatz(
-                diagonal=IGCR2SpinRestrictedSpec(pair=diagonal.pair),
-                left=left,
-                right=right,
-                nocc=legacy_parameterization.nocc,
-            )
-
-    elif order == 3:
-
-        def build(instances):
-            left, diagonal, final = instances
-            right = _right_unitary_from_left_and_final(
-                left, final, legacy_parameterization.nocc
-            )
-            return IGCR3Ansatz(
-                diagonal=IGCR3SpinRestrictedSpec(
-                    double_params=diagonal.double_params,
-                    pair_values=diagonal.pair_values,
-                    tau=diagonal.tau,
-                    omega_values=diagonal.omega_values,
-                ),
-                left=left,
-                right=right,
-                nocc=legacy_parameterization.nocc,
-            )
-
-    elif order == 4:
-
-        def build(instances):
-            left, diagonal, final = instances
-            right = _right_unitary_from_left_and_final(
-                left, final, legacy_parameterization.nocc
-            )
-            return IGCR4Ansatz(
-                diagonal=IGCR4SpinRestrictedSpec(
-                    double_params=diagonal.double_params,
-                    pair_values=diagonal.pair_values,
-                    tau=diagonal.tau,
-                    omega_values=diagonal.omega_values,
-                    eta_values=diagonal.eta_values,
-                    rho_values=diagonal.rho_values,
-                    sigma_values=diagonal.sigma_values,
-                ),
-                left=left,
-                right=right,
-                nocc=legacy_parameterization.nocc,
-            )
-
-    else:
-        raise ValueError("order must be 2, 3, or 4")
-
-    return GateSequenceParameterization(
-        gates=(
-            OrbitalRotationGate(
-                "left",
-                legacy_parameterization.left_orbital_chart,
-                legacy_parameterization.norb,
-            ),
-            DiagonalCorrelatorGate(
-                "diagonal",
-                legacy_parameterization.diagonal_chart,
-            ),
-            OrbitalRotationGate(
-                "right",
-                legacy_parameterization.right_orbital_chart,
-                legacy_parameterization.norb,
-            ),
-        ),
-        ansatz_builder=build,
-        native_parameters_from_public=legacy_parameterization._native_parameters_from_public,
-        ansatz_parameters_from_instance=legacy_parameterization.parameters_from_ansatz,
-        default_nelec=(legacy_parameterization.nocc, legacy_parameterization.nocc),
-    )
+    parameterization = IGCRSpinRestrictedParameterization(**options)
+    if backend == "sequence":
+        return parameterization.to_gate_sequence()
+    return parameterization
 
 
 def PairUCCD_GCR(
