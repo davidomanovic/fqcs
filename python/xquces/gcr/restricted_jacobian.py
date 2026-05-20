@@ -398,11 +398,12 @@ def _diag_feature_matrix(
     parameterization: object,
     nelec: tuple[int, int],
 ) -> np.ndarray:
-    if isinstance(parameterization, IGCR2SpinRestrictedParameterization):
+    order = getattr(parameterization, "order", None)
+    if isinstance(parameterization, IGCR2SpinRestrictedParameterization) or order == 2:
         return _igcr2_feature_matrix(parameterization, nelec)
-    if isinstance(parameterization, IGCR3SpinRestrictedParameterization):
+    if isinstance(parameterization, IGCR3SpinRestrictedParameterization) or order == 3:
         return _igcr3_feature_matrix(parameterization, nelec)
-    if isinstance(parameterization, IGCR4SpinRestrictedParameterization):
+    if isinstance(parameterization, IGCR4SpinRestrictedParameterization) or order == 4:
         return _igcr4_feature_matrix(parameterization, nelec)
     raise TypeError(type(parameterization).__name__)
 
@@ -1115,9 +1116,11 @@ def make_restricted_gcr_vjp(
     reference_vec: np.ndarray,
     nelec: tuple[int, int],
 ) -> Callable[[np.ndarray, np.ndarray], np.ndarray]:
-    if isinstance(parameterization, IGCR2SpinRestrictedParameterization) or getattr(
-        parameterization, "layers", 1
-    ) > 1:
+    if (
+        isinstance(parameterization, IGCR2SpinRestrictedParameterization)
+        or getattr(parameterization, "order", None) == 2
+        or getattr(parameterization, "layers", 1) > 1
+    ):
         return make_layered_igcr2_vjp(parameterization, reference_vec, nelec)
 
     jac = make_restricted_gcr_jacobian(parameterization, reference_vec, nelec)
@@ -1138,9 +1141,11 @@ def make_restricted_gcr_jacobian(
     reference_vec: np.ndarray,
     nelec: tuple[int, int],
 ) -> Callable[[np.ndarray], np.ndarray]:
-    if isinstance(parameterization, IGCR2SpinRestrictedParameterization) or getattr(
-        parameterization, "layers", 1
-    ) > 1:
+    if (
+        isinstance(parameterization, IGCR2SpinRestrictedParameterization)
+        or getattr(parameterization, "order", None) == 2
+        or getattr(parameterization, "layers", 1) > 1
+    ):
         return make_layered_igcr2_jacobian(
             parameterization, reference_vec, nelec
         )
@@ -1266,9 +1271,11 @@ def make_restricted_gcr_subspace_jacobian(
     Unlike :func:`make_restricted_gcr_jacobian`, this does not materialise the
     full tangent matrix. Its cost scales with the number of requested directions.
     """
-    if isinstance(parameterization, IGCR2SpinRestrictedParameterization) or getattr(
-        parameterization, "layers", 1
-    ) > 1:
+    if (
+        isinstance(parameterization, IGCR2SpinRestrictedParameterization)
+        or getattr(parameterization, "order", None) == 2
+        or getattr(parameterization, "layers", 1) > 1
+    ):
         return make_layered_igcr2_subspace_jacobian(
             parameterization, reference_vec, nelec
         )

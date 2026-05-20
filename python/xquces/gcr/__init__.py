@@ -55,6 +55,7 @@ from xquces.gcr.pair_uccd_reference import (
     GCR2ProductPairUCCDParameterization,
     GCR3ProductPairUCCDParameterization,
     GCR4ProductPairUCCDParameterization,
+    PairUCCDIGCRParameterization,
 )
 from xquces.gcr.product_pair_uccd import (
     SlaterPairUCCDStateParameterization,
@@ -91,6 +92,7 @@ __all__ = [
     "GCR2ProductPairUCCDParameterization",
     "GCR3ProductPairUCCDParameterization",
     "GCR4ProductPairUCCDParameterization",
+    "PairUCCDIGCRParameterization",
     "SlaterPairUCCDStateParameterization",
     "IGCR2Ansatz",
     "IGCR2LayeredAnsatz",

@@ -23,12 +23,14 @@ from xquces.gcr.igcr import (
     IGCR4Ansatz,
     IGCR4SpinRestrictedParameterization,
     IGCR4SpinRestrictedSpec,
+    IGCRSpinRestrictedParameterization,
     layered_igcr2_from_ccsd_t_amplitudes,
     reduce_spin_restricted,
     relabel_igcr2_ansatz_orbitals,
     relabel_igcr3_ansatz_orbitals,
     relabel_igcr4_ansatz_orbitals,
 )
+from xquces.gcr.canonical import IGCRAnsatz
 from xquces.gcr.model import gcr_from_ucj_ansatz
 from xquces.gcr.utils import (
     _default_eta_indices,
@@ -773,192 +775,37 @@ class _PairUCCDReferenceMixin:
         )
 
 
-class _ExponentialPairUCCDReferenceMixin(_PairUCCDReferenceMixin):
-    _reference_parameterization_type = PairUCCDStateParameterization
-    _transfer_parameters_impl = staticmethod(_transfer_params)
+@dataclass(frozen=True)
+class _PairUCCDIGCRAnsatzParameterization(IGCRSpinRestrictedParameterization):
+    """Order-parametrized iGCR adapter preserving legacy ansatz objects."""
+
+    def ansatz_from_parameters(self, params: np.ndarray):
+        ansatz = super().ansatz_from_parameters(params)
+        return ansatz.to_legacy() if isinstance(ansatz, IGCRAnsatz) else ansatz
 
 
 @dataclass(frozen=True)
-class GCR2PairUCCDParameterization(_ExponentialPairUCCDReferenceMixin):
+class PairUCCDIGCRParameterization(_PairUCCDReferenceMixin):
+    """Canonical pair-UCCD reference plus order-parametrized iGCR ansatz."""
+
     norb: int
     nocc: int
+    order: int = 2
+    reference_kind: str = "exponential"
+    nelec: tuple[int, int] | None = None
+    layers: int = 1
+    shared_diagonal: bool = False
     interaction_pairs: list[tuple[int, int]] | None = None
-    base_parameterization: IGCR2SpinRestrictedParameterization | None = None
+    tau_indices_: list[tuple[int, int]] | None = None
+    omega_indices_: list[tuple[int, int, int]] | None = None
+    eta_indices_: list[tuple[int, int]] | None = None
+    rho_indices_: list[tuple[int, int, int]] | None = None
+    sigma_indices_: list[tuple[int, int, int, int]] | None = None
+    reduce_cubic_gauge: bool = True
+    reduce_quartic_gauge: bool = True
+    base_parameterization: object | None = None
     left_orbital_chart: object = field(default_factory=IGCR2LeftUnitaryChart)
-    right_orbital_chart_override: object = field(default_factory=GCR2TraceFixedFullUnitaryChart)
-    real_right_orbital_chart: bool = False
-    left_right_ov_relative_scale: float | None = None
-
-    @property
-    def ansatz_parameterization(self) -> IGCR2SpinRestrictedParameterization:
-        if self.base_parameterization is not None:
-            return self.base_parameterization
-        return IGCR2SpinRestrictedParameterization(
-            self.norb,
-            self.nocc,
-            interaction_pairs=self.interaction_pairs,
-            left_orbital_chart=self.left_orbital_chart,
-            right_orbital_chart_override=self.right_orbital_chart_override,
-            real_right_orbital_chart=self.real_right_orbital_chart,
-            left_right_ov_relative_scale=self.left_right_ov_relative_scale,
-        )
-
-    def _ansatz_from_ucj_ansatz(self, ansatz: UCJAnsatz):
-        return _igcr2_product_ansatz_from_ucj(ansatz, self.nocc)
-
-    def parameters_from_t_amplitudes(
-        self,
-        t2: np.ndarray,
-        t1: np.ndarray | None = None,
-        *,
-        scale: float = 0.5,
-        **df_options,
-    ) -> np.ndarray:
-        igcr2 = layered_igcr2_from_ccsd_t_amplitudes(
-            t2, t1=t1, layers=1, nocc=self.nocc, **df_options
-        )
-        combined = self.parameters_from_ansatz(igcr2)
-        return _combined_seed(
-            self.reference_parameters_from_t2(t2, scale=scale),
-            combined[self.n_reference_params:],
-        )
-
-
-@dataclass(frozen=True)
-class GCR3PairUCCDParameterization(_ExponentialPairUCCDReferenceMixin):
-    norb: int
-    nocc: int
-    base_parameterization: IGCR3SpinRestrictedParameterization | None = None
-    left_orbital_chart: object = field(default_factory=IGCR2LeftUnitaryChart)
-    right_orbital_chart_override: object = field(default_factory=GCR2TraceFixedFullUnitaryChart)
-    real_right_orbital_chart: bool = False
-    left_right_ov_relative_scale: float | None = None
-    tau_seed_scale: float = 0.0
-    omega_seed_scale: float = 0.0
-
-    @property
-    def ansatz_parameterization(self) -> IGCR3SpinRestrictedParameterization:
-        if self.base_parameterization is not None:
-            return self.base_parameterization
-        return IGCR3SpinRestrictedParameterization(
-            self.norb,
-            self.nocc,
-            left_orbital_chart=self.left_orbital_chart,
-            right_orbital_chart_override=self.right_orbital_chart_override,
-            real_right_orbital_chart=self.real_right_orbital_chart,
-            left_right_ov_relative_scale=self.left_right_ov_relative_scale,
-        )
-
-    def _ansatz_from_ucj_ansatz(self, ansatz: UCJAnsatz):
-        return IGCR3Ansatz.from_ucj_ansatz(
-            ansatz,
-            nocc=self.nocc,
-            tau_scale=self.tau_seed_scale,
-            omega_scale=self.omega_seed_scale,
-        )
-
-    def nested_lift_parameters_from(
-        self,
-        previous_parameters: np.ndarray,
-        previous_parameterization: object,
-        *,
-        hamiltonian=None,
-        optimize_weights: bool = True,
-        maxiter: int = 40,
-        max_abs_weight: float = 2.0,
-        accept_tol: float = 1e-12,
-        return_info: bool = False,
-    ):
-        reference_params, source_ansatz = _transferred_reference_and_source_ansatz(
-            self,
-            previous_parameters,
-            previous_parameterization,
-        )
-        if isinstance(source_ansatz, IGCR3Ansatz):
-            params = _combined_seed(
-                reference_params,
-                self.ansatz_parameterization.parameters_from_ansatz(source_ansatz),
-            )
-            energy = (
-                _state_energy(self, hamiltonian, params)
-                if hamiltonian is not None
-                else None
-            )
-            info = HigherOrderLiftSeed(
-                params=params,
-                weights=np.zeros(0, dtype=np.float64),
-                energy=energy,
-                baseline_params=params,
-                baseline_energy=energy,
-                accepted=False,
-                message="already GCR-3",
-            )
-            return info if return_info else info.params
-        if not isinstance(source_ansatz, IGCR2Ansatz):
-            raise TypeError(
-                f"GCR-3 nested lift requires a GCR-2 source ansatz, got {type(source_ansatz)!r}."
-            )
-
-        pair = source_ansatz.diagonal.to_standard().pair_params
-        tau_direction, omega_direction = _triples_lift_from_pair_matrix(pair)
-
-        def params_from_weights(weights: np.ndarray) -> np.ndarray:
-            weights = np.asarray(weights, dtype=np.float64)
-            diagonal = IGCR3SpinRestrictedSpec.from_igcr2_diagonal(
-                source_ansatz.diagonal,
-                tau=weights[0] * tau_direction,
-                omega_values=weights[1] * omega_direction,
-            )
-            ansatz = IGCR3Ansatz(
-                diagonal=diagonal,
-                left=np.asarray(source_ansatz.left, dtype=np.complex128),
-                right=np.asarray(source_ansatz.right, dtype=np.complex128),
-                nocc=source_ansatz.nocc,
-            )
-            return _combined_seed(
-                reference_params,
-                self.ansatz_parameterization.parameters_from_ansatz(ansatz),
-            )
-
-        info = _optimize_scalar_lift_weights(
-            self,
-            hamiltonian,
-            params_from_weights,
-            2,
-            optimize_weights=optimize_weights,
-            maxiter=maxiter,
-            max_abs_weight=max_abs_weight,
-            accept_tol=accept_tol,
-        )
-        return info if return_info else info.params
-
-    def parameters_from_t_amplitudes(
-        self,
-        t2: np.ndarray,
-        t1: np.ndarray | None = None,
-        *,
-        scale: float = 0.5,
-        **df_options,
-    ) -> np.ndarray:
-        igcr2 = layered_igcr2_from_ccsd_t_amplitudes(
-            t2, t1=t1, layers=1, nocc=self.nocc, **df_options
-        )
-        ansatz = IGCR3Ansatz.from_igcr2_ansatz(
-            igcr2, tau_scale=self.tau_seed_scale, omega_scale=self.omega_seed_scale
-        )
-        combined = self.parameters_from_ansatz(ansatz)
-        return _combined_seed(
-            self.reference_parameters_from_t2(t2, scale=scale),
-            combined[self.n_reference_params:],
-        )
-
-
-@dataclass(frozen=True)
-class GCR4PairUCCDParameterization(_ExponentialPairUCCDReferenceMixin):
-    norb: int
-    nocc: int
-    base_parameterization: IGCR4SpinRestrictedParameterization | None = None
-    left_orbital_chart: object = field(default_factory=IGCR2LeftUnitaryChart)
+    middle_orbital_chart: object = field(default_factory=IGCR2LeftUnitaryChart)
     right_orbital_chart_override: object = field(default_factory=GCR2TraceFixedFullUnitaryChart)
     real_right_orbital_chart: bool = False
     left_right_ov_relative_scale: float | None = None
@@ -968,20 +815,111 @@ class GCR4PairUCCDParameterization(_ExponentialPairUCCDReferenceMixin):
     rho_seed_scale: float = 0.0
     sigma_seed_scale: float = 0.0
 
+    def __post_init__(self):
+        order = int(self.order)
+        if order not in {2, 3, 4}:
+            raise ValueError("order must be 2, 3, or 4")
+        kind = _normalize_pair_uccd_reference_kind(self.reference_kind)
+        nelec = (int(self.nocc), int(self.nocc)) if self.nelec is None else tuple(
+            int(x) for x in self.nelec
+        )
+        if nelec != (int(self.nocc), int(self.nocc)):
+            raise ValueError(
+                "pair-UCCD+iGCR parameterizations require nelec=(nocc, nocc)"
+            )
+        if int(self.layers) != self.layers or self.layers < 1:
+            raise ValueError("layers must be a positive integer")
+        object.__setattr__(self, "order", order)
+        object.__setattr__(self, "reference_kind", kind)
+        object.__setattr__(self, "nelec", nelec)
+        object.__setattr__(self, "layers", int(self.layers))
+
     @property
-    def ansatz_parameterization(self) -> IGCR4SpinRestrictedParameterization:
+    def reference_parameterization(self):
+        reference_types = {
+            "exponential": PairUCCDStateParameterization,
+            "product": ProductPairUCCDStateParameterization,
+        }
+        return reference_types[self.reference_kind](self.norb, self.nelec)
+
+    @property
+    def _composite(self):
+        return _make_composite(
+            self.reference_parameterization,
+            self.ansatz_parameterization,
+            self.nelec,
+        )
+
+    @property
+    def ansatz_parameterization(self) -> IGCRSpinRestrictedParameterization:
         if self.base_parameterization is not None:
             return self.base_parameterization
-        return IGCR4SpinRestrictedParameterization(
+        return _PairUCCDIGCRAnsatzParameterization(
             self.norb,
             self.nocc,
+            order=self.order,
+            layers=self.layers,
+            shared_diagonal=self.shared_diagonal,
+            interaction_pairs=self.interaction_pairs,
+            tau_indices_=self.tau_indices_,
+            omega_indices_=self.omega_indices_,
+            eta_indices_=self.eta_indices_,
+            rho_indices_=self.rho_indices_,
+            sigma_indices_=self.sigma_indices_,
+            reduce_cubic_gauge=self.reduce_cubic_gauge,
+            reduce_quartic_gauge=self.reduce_quartic_gauge,
             left_orbital_chart=self.left_orbital_chart,
+            middle_orbital_chart=self.middle_orbital_chart,
             right_orbital_chart_override=self.right_orbital_chart_override,
             real_right_orbital_chart=self.real_right_orbital_chart,
             left_right_ov_relative_scale=self.left_right_ov_relative_scale,
         )
 
+    def ansatz_from_parameters(self, params: np.ndarray):
+        ansatz = self.ansatz_parameterization.ansatz_from_parameters(params)
+        return ansatz.to_legacy() if isinstance(ansatz, IGCRAnsatz) else ansatz
+
+    def _seed_from_ansatz_impl(self, ansatz) -> np.ndarray:
+        if self.reference_kind == "product":
+            return _product_seed_from_ansatz(
+                self.n_reference_params,
+                self.ansatz_parameterization,
+                ansatz,
+            )
+        return _seed_from_ansatz(
+            self.n_reference_params,
+            self.ansatz_parameterization,
+            ansatz,
+        )
+
     def _ansatz_from_ucj_ansatz(self, ansatz: UCJAnsatz):
+        if self.order == 2:
+            if self.reference_kind == "product" and self.layers != 1:
+                return None
+            return _igcr2_product_ansatz_from_ucj(ansatz, self.nocc)
+        if self.reference_kind == "product":
+            igcr2 = _igcr2_product_ansatz_from_ucj(ansatz, self.nocc)
+            if self.order == 3:
+                return IGCR3Ansatz.from_igcr2_ansatz(
+                    igcr2,
+                    tau_scale=self.tau_seed_scale,
+                    omega_scale=self.omega_seed_scale,
+                )
+            return IGCR4Ansatz.from_igcr2_ansatz(
+                igcr2,
+                tau_scale=self.tau_seed_scale,
+                omega_scale=self.omega_seed_scale,
+                eta_scale=self.eta_seed_scale,
+                rho_scale=self.rho_seed_scale,
+                sigma_scale=self.sigma_seed_scale,
+            )
+        if self.order == 3:
+            return IGCR3Ansatz.from_ucj_ansatz(
+                ansatz,
+                nocc=self.nocc,
+                tau_scale=self.tau_seed_scale,
+                omega_scale=self.omega_seed_scale,
+            )
         return IGCR4Ansatz.from_ucj_ansatz(
             ansatz,
             nocc=self.nocc,
@@ -992,7 +930,45 @@ class GCR4PairUCCDParameterization(_ExponentialPairUCCDReferenceMixin):
             sigma_scale=self.sigma_seed_scale,
         )
 
-    def nested_lift_parameters_from(
+    def parameters_from_t_amplitudes(
+        self,
+        t2: np.ndarray,
+        t1: np.ndarray | None = None,
+        *,
+        scale: float = 0.5,
+        **df_options,
+    ) -> np.ndarray:
+        igcr2 = layered_igcr2_from_ccsd_t_amplitudes(
+            t2,
+            t1=t1,
+            layers=self.layers if self.order == 2 else 1,
+            nocc=self.nocc,
+            **df_options,
+        )
+        if self.order == 2:
+            ansatz = igcr2
+        elif self.order == 3:
+            ansatz = IGCR3Ansatz.from_igcr2_ansatz(
+                igcr2,
+                tau_scale=self.tau_seed_scale,
+                omega_scale=self.omega_seed_scale,
+            )
+        else:
+            ansatz = IGCR4Ansatz.from_igcr2_ansatz(
+                igcr2,
+                tau_scale=self.tau_seed_scale,
+                omega_scale=self.omega_seed_scale,
+                eta_scale=self.eta_seed_scale,
+                rho_scale=self.rho_seed_scale,
+                sigma_scale=self.sigma_seed_scale,
+            )
+        combined = self.parameters_from_ansatz(ansatz)
+        return _combined_seed(
+            self.reference_parameters_from_t2(t2, scale=scale),
+            combined[self.n_reference_params:],
+        )
+
+    def _nested_lift_parameters_from(
         self,
         previous_parameters: np.ndarray,
         previous_parameterization: object,
@@ -1004,15 +980,22 @@ class GCR4PairUCCDParameterization(_ExponentialPairUCCDReferenceMixin):
         accept_tol: float = 1e-12,
         return_info: bool = False,
     ):
+        if self.order not in {3, 4}:
+            raise ValueError("nested lifts are defined for GCR-3 and GCR-4 targets")
         reference_params, source_ansatz = _transferred_reference_and_source_ansatz(
             self,
             previous_parameters,
             previous_parameterization,
         )
-        if isinstance(source_ansatz, IGCR4Ansatz):
+        source_generic = (
+            source_ansatz
+            if isinstance(source_ansatz, IGCRAnsatz)
+            else IGCRAnsatz.from_legacy(source_ansatz)
+        )
+        if source_generic.order == self.order:
             params = _combined_seed(
                 reference_params,
-                self.ansatz_parameterization.parameters_from_ansatz(source_ansatz),
+                self.ansatz_parameterization.parameters_from_ansatz(source_generic),
             )
             energy = (
                 _state_energy(self, hamiltonian, params)
@@ -1026,21 +1009,71 @@ class GCR4PairUCCDParameterization(_ExponentialPairUCCDReferenceMixin):
                 baseline_params=params,
                 baseline_energy=energy,
                 accepted=False,
-                message="already GCR-4",
+                message=f"already GCR-{self.order}",
             )
             return info if return_info else info.params
-        if isinstance(source_ansatz, IGCR2Ansatz):
-            source_ansatz = IGCR3Ansatz.from_igcr2_ansatz(
-                source_ansatz,
-                tau_scale=0.0,
-                omega_scale=0.0,
-            )
-        if not isinstance(source_ansatz, IGCR3Ansatz):
-            raise TypeError(
-                f"GCR-4 nested lift requires a GCR-2 or GCR-3 source ansatz, got {type(source_ansatz)!r}."
-            )
 
-        pair = source_ansatz.diagonal.pair_matrix()
+        if self.order == 3:
+            if source_generic.order != 2:
+                raise TypeError(
+                    "GCR-3 nested lift requires a GCR-2 source ansatz, "
+                    f"got order {source_generic.order!r}."
+                )
+            source_igcr2 = source_generic.to_igcr2_ansatz()
+            pair = source_igcr2.diagonal.to_standard().pair_params
+            tau_direction, omega_direction = _triples_lift_from_pair_matrix(pair)
+
+            def params_from_weights(weights: np.ndarray) -> np.ndarray:
+                weights = np.asarray(weights, dtype=np.float64)
+                ansatz = IGCR3Ansatz.from_igcr2_ansatz(
+                    source_igcr2,
+                    tau_scale=0.0,
+                    omega_scale=0.0,
+                )
+                diagonal = IGCR3SpinRestrictedSpec.from_igcr2_diagonal(
+                    source_igcr2.diagonal,
+                    tau=weights[0] * tau_direction,
+                    omega_values=weights[1] * omega_direction,
+                )
+                ansatz = IGCR3Ansatz(
+                    diagonal=diagonal,
+                    left=np.asarray(ansatz.left, dtype=np.complex128),
+                    right=np.asarray(ansatz.right, dtype=np.complex128),
+                    nocc=ansatz.nocc,
+                )
+                return _combined_seed(
+                    reference_params,
+                    self.ansatz_parameterization.parameters_from_ansatz(ansatz),
+                )
+
+            info = _optimize_scalar_lift_weights(
+                self,
+                hamiltonian,
+                params_from_weights,
+                2,
+                optimize_weights=optimize_weights,
+                maxiter=maxiter,
+                max_abs_weight=max_abs_weight,
+                accept_tol=accept_tol,
+            )
+            return info if return_info else info.params
+
+        if source_generic.order == 2:
+            source_generic = IGCRAnsatz.from_legacy(
+                IGCR3Ansatz.from_igcr2_ansatz(
+                    source_generic.to_igcr2_ansatz(),
+                    tau_scale=0.0,
+                    omega_scale=0.0,
+                ),
+                order=3,
+            )
+        if source_generic.order != 3:
+            raise TypeError(
+                "GCR-4 nested lift requires a GCR-2 or GCR-3 source ansatz, "
+                f"got order {source_generic.order!r}."
+            )
+        source_igcr3 = source_generic.to_igcr3_ansatz()
+        pair = source_igcr3.diagonal.pair_matrix()
         eta_direction, rho_direction, sigma_direction = _quartic_lift_from_pair_matrix(
             pair
         )
@@ -1048,16 +1081,16 @@ class GCR4PairUCCDParameterization(_ExponentialPairUCCDReferenceMixin):
         def params_from_weights(weights: np.ndarray) -> np.ndarray:
             weights = np.asarray(weights, dtype=np.float64)
             diagonal = IGCR4SpinRestrictedSpec.from_igcr3_diagonal(
-                source_ansatz.diagonal,
+                source_igcr3.diagonal,
                 eta_values=weights[0] * eta_direction,
                 rho_values=weights[1] * rho_direction,
                 sigma_values=weights[2] * sigma_direction,
             )
             ansatz = IGCR4Ansatz(
                 diagonal=diagonal,
-                left=np.asarray(source_ansatz.left, dtype=np.complex128),
-                right=np.asarray(source_ansatz.right, dtype=np.complex128),
-                nocc=source_ansatz.nocc,
+                left=np.asarray(source_igcr3.left, dtype=np.complex128),
+                right=np.asarray(source_igcr3.right, dtype=np.complex128),
+                nocc=source_igcr3.nocc,
             )
             return _combined_seed(
                 reference_params,
@@ -1076,29 +1109,92 @@ class GCR4PairUCCDParameterization(_ExponentialPairUCCDReferenceMixin):
         )
         return info if return_info else info.params
 
-    def parameters_from_t_amplitudes(
+    def transfer_parameters_from(
         self,
-        t2: np.ndarray,
-        t1: np.ndarray | None = None,
-        *,
-        scale: float = 0.5,
-        **df_options,
+        previous_parameters: np.ndarray,
+        previous_parameterization: object | None = None,
+        old_for_new: np.ndarray | None = None,
+        phases: np.ndarray | None = None,
+        orbital_overlap: np.ndarray | None = None,
+        block_diagonal: bool = True,
     ) -> np.ndarray:
-        igcr2 = layered_igcr2_from_ccsd_t_amplitudes(
-            t2, t1=t1, layers=1, nocc=self.nocc, **df_options
+        impl = (
+            _transfer_product_params
+            if self.reference_kind == "product"
+            else _transfer_params
         )
-        ansatz = IGCR4Ansatz.from_igcr2_ansatz(
-            igcr2,
-            tau_scale=self.tau_seed_scale,
-            omega_scale=self.omega_seed_scale,
-            eta_scale=self.eta_seed_scale,
-            rho_scale=self.rho_seed_scale,
-            sigma_scale=self.sigma_seed_scale,
+        return impl(
+            self,
+            previous_parameters,
+            previous_parameterization,
+            old_for_new,
+            phases,
+            orbital_overlap,
+            block_diagonal,
         )
-        combined = self.parameters_from_ansatz(ansatz)
-        return _combined_seed(
-            self.reference_parameters_from_t2(t2, scale=scale),
-            combined[self.n_reference_params:],
+
+
+@dataclass(frozen=True)
+class GCR2PairUCCDParameterization(PairUCCDIGCRParameterization):
+    order: int = field(default=2, init=False)
+    reference_kind: str = field(default="exponential", init=False)
+
+
+@dataclass(frozen=True)
+class GCR3PairUCCDParameterization(PairUCCDIGCRParameterization):
+    order: int = field(default=3, init=False)
+    reference_kind: str = field(default="exponential", init=False)
+
+    def nested_lift_parameters_from(
+        self,
+        previous_parameters: np.ndarray,
+        previous_parameterization: object,
+        *,
+        hamiltonian=None,
+        optimize_weights: bool = True,
+        maxiter: int = 40,
+        max_abs_weight: float = 2.0,
+        accept_tol: float = 1e-12,
+        return_info: bool = False,
+    ):
+        return self._nested_lift_parameters_from(
+            previous_parameters,
+            previous_parameterization,
+            hamiltonian=hamiltonian,
+            optimize_weights=optimize_weights,
+            maxiter=maxiter,
+            max_abs_weight=max_abs_weight,
+            accept_tol=accept_tol,
+            return_info=return_info,
+        )
+
+
+@dataclass(frozen=True)
+class GCR4PairUCCDParameterization(PairUCCDIGCRParameterization):
+    order: int = field(default=4, init=False)
+    reference_kind: str = field(default="exponential", init=False)
+
+    def nested_lift_parameters_from(
+        self,
+        previous_parameters: np.ndarray,
+        previous_parameterization: object,
+        *,
+        hamiltonian=None,
+        optimize_weights: bool = True,
+        maxiter: int = 40,
+        max_abs_weight: float = 2.0,
+        accept_tol: float = 1e-12,
+        return_info: bool = False,
+    ):
+        return self._nested_lift_parameters_from(
+            previous_parameters,
+            previous_parameterization,
+            hamiltonian=hamiltonian,
+            optimize_weights=optimize_weights,
+            maxiter=maxiter,
+            max_abs_weight=max_abs_weight,
+            accept_tol=accept_tol,
+            return_info=return_info,
         )
 
 
@@ -1389,16 +1485,31 @@ def _igcr4_product_transfer_parameters_from_ansatz(
     return parameterization._public_parameters_from_native(out)
 
 
-def _convert_ansatz_for_product_transfer(parameterization, ansatz):
-    if isinstance(parameterization, IGCR2SpinRestrictedParameterization):
-        if isinstance(ansatz, IGCR2Ansatz):
-            return ansatz
+def _igcr_order(parameterization) -> int:
+    order = getattr(parameterization, "order", None)
+    if order is not None:
+        return int(order)
+    if isinstance(parameterization, IGCR4SpinRestrictedParameterization):
+        return 4
     if isinstance(parameterization, IGCR3SpinRestrictedParameterization):
+        return 3
+    if isinstance(parameterization, IGCR2SpinRestrictedParameterization):
+        return 2
+    raise TypeError(f"Unsupported iGCR parameterization: {type(parameterization)!r}")
+
+
+def _convert_ansatz_for_product_transfer(parameterization, ansatz):
+    order = _igcr_order(parameterization)
+    if isinstance(ansatz, IGCRAnsatz):
+        ansatz = ansatz.to_legacy()
+    if order == 2 and isinstance(ansatz, (IGCR2Ansatz, IGCR2LayeredAnsatz)):
+        return ansatz
+    if order == 3:
         if isinstance(ansatz, IGCR3Ansatz):
             return ansatz
         if isinstance(ansatz, IGCR2Ansatz):
             return IGCR3Ansatz.from_igcr2_ansatz(ansatz)
-    if isinstance(parameterization, IGCR4SpinRestrictedParameterization):
+    if order == 4:
         if isinstance(ansatz, IGCR4Ansatz):
             return ansatz
         if isinstance(ansatz, IGCR3Ansatz):
@@ -1411,11 +1522,13 @@ def _convert_ansatz_for_product_transfer(parameterization, ansatz):
 
 
 def _product_transfer_parameters_from_ansatz(parameterization, ansatz):
-    if isinstance(parameterization, IGCR4SpinRestrictedParameterization):
+    ansatz = _convert_ansatz_for_product_transfer(parameterization, ansatz)
+    order = _igcr_order(parameterization)
+    if order == 4:
         return _igcr4_product_transfer_parameters_from_ansatz(parameterization, ansatz)
-    if isinstance(parameterization, IGCR3SpinRestrictedParameterization):
+    if order == 3:
         return _igcr3_product_transfer_parameters_from_ansatz(parameterization, ansatz)
-    if isinstance(parameterization, IGCR2SpinRestrictedParameterization):
+    if order == 2:
         return _igcr2_product_transfer_parameters_from_ansatz(parameterization, ansatz)
     raise TypeError(
         f"Unsupported product transfer parameterization: {type(parameterization)!r}"
@@ -1432,6 +1545,8 @@ def _product_seed_from_ansatz(
 
 
 def _relabel_product_transfer_ansatz(ansatz, old_for_new, phases):
+    if isinstance(ansatz, IGCRAnsatz):
+        ansatz = ansatz.to_legacy()
     if isinstance(ansatz, IGCR4Ansatz):
         return relabel_igcr4_ansatz_orbitals(ansatz, old_for_new, phases)
     if isinstance(ansatz, IGCR3Ansatz):
@@ -1538,9 +1653,9 @@ def _direct_nested_product_ansatz_params(
         source.n_pair_params,
     )
 
-    if isinstance(source, IGCR3SpinRestrictedParameterization) and isinstance(
-        target, IGCR4SpinRestrictedParameterization
-    ):
+    source_order = _igcr_order(source)
+    target_order = _igcr_order(target)
+    if source_order == 3 and target_order == 4:
         if (
             source.n_tau_params != target.n_tau_params
             or source.n_omega_params != target.n_omega_params
@@ -1557,13 +1672,7 @@ def _direct_nested_product_ansatz_params(
             source.n_left_orbital_rotation_params + source.n_pair_params,
             source.n_tau_params + source.n_omega_params,
         )
-    elif not (
-        isinstance(source, IGCR2SpinRestrictedParameterization)
-        and isinstance(
-            target,
-            (IGCR3SpinRestrictedParameterization, IGCR4SpinRestrictedParameterization),
-        )
-    ):
+    elif not (source_order == 2 and target_order in {3, 4}):
         return None
 
     _copy_direct_block(
@@ -1705,187 +1814,22 @@ def _transfer_product_params(
     )
 
 
-class _ProductPairUCCDReferenceMixin(_PairUCCDReferenceMixin):
-    _reference_parameterization_type = ProductPairUCCDStateParameterization
-    _transfer_parameters_impl = staticmethod(_transfer_product_params)
-
-    def _seed_from_ansatz_impl(self, ansatz) -> np.ndarray:
-        return _product_seed_from_ansatz(
-            self.n_reference_params,
-            self.ansatz_parameterization,
-            ansatz,
-        )
+@dataclass(frozen=True)
+class GCR2ProductPairUCCDParameterization(PairUCCDIGCRParameterization):
+    order: int = field(default=2, init=False)
+    reference_kind: str = field(default="product", init=False)
 
 
 @dataclass(frozen=True)
-class GCR2ProductPairUCCDParameterization(_ProductPairUCCDReferenceMixin):
-    norb: int
-    nocc: int
-    layers: int = 1
-    shared_diagonal: bool = False
-    interaction_pairs: list[tuple[int, int]] | None = None
-    base_parameterization: IGCR2SpinRestrictedParameterization | None = None
-    left_orbital_chart: object = field(default_factory=IGCR2LeftUnitaryChart)
-    middle_orbital_chart: object = field(default_factory=IGCR2LeftUnitaryChart)
-    right_orbital_chart_override: object = field(default_factory=GCR2TraceFixedFullUnitaryChart)
-    real_right_orbital_chart: bool = False
-    left_right_ov_relative_scale: float | None = None
-
-    @property
-    def ansatz_parameterization(self) -> IGCR2SpinRestrictedParameterization:
-        if self.base_parameterization is not None:
-            return self.base_parameterization
-        return IGCR2SpinRestrictedParameterization(
-            self.norb,
-            self.nocc,
-            layers=self.layers,
-            shared_diagonal=self.shared_diagonal,
-            interaction_pairs=self.interaction_pairs,
-            left_orbital_chart=self.left_orbital_chart,
-            middle_orbital_chart=self.middle_orbital_chart,
-            right_orbital_chart_override=self.right_orbital_chart_override,
-            real_right_orbital_chart=self.real_right_orbital_chart,
-            left_right_ov_relative_scale=self.left_right_ov_relative_scale,
-        )
-
-    def _ansatz_from_ucj_ansatz(self, ansatz: UCJAnsatz):
-        if self.layers != 1:
-            return None
-        return _igcr2_product_ansatz_from_ucj(ansatz, self.nocc)
-
-    def parameters_from_t_amplitudes(
-        self,
-        t2: np.ndarray,
-        t1: np.ndarray | None = None,
-        *,
-        scale: float = 0.5,
-        **df_options,
-    ) -> np.ndarray:
-        igcr2 = layered_igcr2_from_ccsd_t_amplitudes(
-            t2, t1=t1, layers=self.layers, nocc=self.nocc, **df_options
-        )
-        combined = self.parameters_from_ansatz(igcr2)
-        return _combined_seed(
-            self.reference_parameters_from_t2(t2, scale=scale),
-            combined[self.n_reference_params:],
-        )
+class GCR3ProductPairUCCDParameterization(PairUCCDIGCRParameterization):
+    order: int = field(default=3, init=False)
+    reference_kind: str = field(default="product", init=False)
 
 
 @dataclass(frozen=True)
-class GCR3ProductPairUCCDParameterization(_ProductPairUCCDReferenceMixin):
-    norb: int
-    nocc: int
-    base_parameterization: IGCR3SpinRestrictedParameterization | None = None
-    left_orbital_chart: object = field(default_factory=IGCR2LeftUnitaryChart)
-    right_orbital_chart_override: object = field(default_factory=GCR2TraceFixedFullUnitaryChart)
-    real_right_orbital_chart: bool = False
-    left_right_ov_relative_scale: float | None = None
-    tau_seed_scale: float = 0.0
-    omega_seed_scale: float = 0.0
-
-    @property
-    def ansatz_parameterization(self) -> IGCR3SpinRestrictedParameterization:
-        if self.base_parameterization is not None:
-            return self.base_parameterization
-        return IGCR3SpinRestrictedParameterization(
-            self.norb,
-            self.nocc,
-            left_orbital_chart=self.left_orbital_chart,
-            right_orbital_chart_override=self.right_orbital_chart_override,
-            real_right_orbital_chart=self.real_right_orbital_chart,
-            left_right_ov_relative_scale=self.left_right_ov_relative_scale,
-        )
-
-    def _ansatz_from_ucj_ansatz(self, ansatz: UCJAnsatz):
-        return IGCR3Ansatz.from_igcr2_ansatz(
-            _igcr2_product_ansatz_from_ucj(ansatz, self.nocc),
-            tau_scale=self.tau_seed_scale,
-            omega_scale=self.omega_seed_scale,
-        )
-
-    def parameters_from_t_amplitudes(
-        self,
-        t2: np.ndarray,
-        t1: np.ndarray | None = None,
-        *,
-        scale: float = 0.5,
-        **df_options,
-    ) -> np.ndarray:
-        igcr2 = layered_igcr2_from_ccsd_t_amplitudes(
-            t2, t1=t1, layers=1, nocc=self.nocc, **df_options
-        )
-        ansatz = IGCR3Ansatz.from_igcr2_ansatz(
-            igcr2, tau_scale=self.tau_seed_scale, omega_scale=self.omega_seed_scale
-        )
-        combined = self.parameters_from_ansatz(ansatz)
-        return _combined_seed(
-            self.reference_parameters_from_t2(t2, scale=scale),
-            combined[self.n_reference_params:],
-        )
-
-
-@dataclass(frozen=True)
-class GCR4ProductPairUCCDParameterization(_ProductPairUCCDReferenceMixin):
-    norb: int
-    nocc: int
-    base_parameterization: IGCR4SpinRestrictedParameterization | None = None
-    left_orbital_chart: object = field(default_factory=IGCR2LeftUnitaryChart)
-    right_orbital_chart_override: object = field(default_factory=GCR2TraceFixedFullUnitaryChart)
-    real_right_orbital_chart: bool = False
-    left_right_ov_relative_scale: float | None = None
-    tau_seed_scale: float = 0.0
-    omega_seed_scale: float = 0.0
-    eta_seed_scale: float = 0.0
-    rho_seed_scale: float = 0.0
-    sigma_seed_scale: float = 0.0
-
-    @property
-    def ansatz_parameterization(self) -> IGCR4SpinRestrictedParameterization:
-        if self.base_parameterization is not None:
-            return self.base_parameterization
-        return IGCR4SpinRestrictedParameterization(
-            self.norb,
-            self.nocc,
-            left_orbital_chart=self.left_orbital_chart,
-            right_orbital_chart_override=self.right_orbital_chart_override,
-            real_right_orbital_chart=self.real_right_orbital_chart,
-            left_right_ov_relative_scale=self.left_right_ov_relative_scale,
-        )
-
-    def _ansatz_from_ucj_ansatz(self, ansatz: UCJAnsatz):
-        return IGCR4Ansatz.from_igcr2_ansatz(
-            _igcr2_product_ansatz_from_ucj(ansatz, self.nocc),
-            tau_scale=self.tau_seed_scale,
-            omega_scale=self.omega_seed_scale,
-            eta_scale=self.eta_seed_scale,
-            rho_scale=self.rho_seed_scale,
-            sigma_scale=self.sigma_seed_scale,
-        )
-
-    def parameters_from_t_amplitudes(
-        self,
-        t2: np.ndarray,
-        t1: np.ndarray | None = None,
-        *,
-        scale: float = 0.5,
-        **df_options,
-    ) -> np.ndarray:
-        igcr2 = layered_igcr2_from_ccsd_t_amplitudes(
-            t2, t1=t1, layers=1, nocc=self.nocc, **df_options
-        )
-        ansatz = IGCR4Ansatz.from_igcr2_ansatz(
-            igcr2,
-            tau_scale=self.tau_seed_scale,
-            omega_scale=self.omega_seed_scale,
-            eta_scale=self.eta_seed_scale,
-            rho_scale=self.rho_seed_scale,
-            sigma_scale=self.sigma_seed_scale,
-        )
-        combined = self.parameters_from_ansatz(ansatz)
-        return _combined_seed(
-            self.reference_parameters_from_t2(t2, scale=scale),
-            combined[self.n_reference_params:],
-        )
+class GCR4ProductPairUCCDParameterization(PairUCCDIGCRParameterization):
+    order: int = field(default=4, init=False)
+    reference_kind: str = field(default="product", init=False)
 
 
 def _normalize_pair_uccd_reference_kind(reference_kind: str) -> str:
@@ -1908,9 +1852,20 @@ class GCRPairUCCDParameterization:
     nocc: int
     order: int = 2
     reference_kind: str = "exponential"
+    nelec: tuple[int, int] | None = None
+    layers: int = 1
+    shared_diagonal: bool = False
     interaction_pairs: list[tuple[int, int]] | None = None
+    tau_indices_: list[tuple[int, int]] | None = None
+    omega_indices_: list[tuple[int, int, int]] | None = None
+    eta_indices_: list[tuple[int, int]] | None = None
+    rho_indices_: list[tuple[int, int, int]] | None = None
+    sigma_indices_: list[tuple[int, int, int, int]] | None = None
+    reduce_cubic_gauge: bool = True
+    reduce_quartic_gauge: bool = True
     base_parameterization: object | None = None
     left_orbital_chart: object = field(default_factory=IGCR2LeftUnitaryChart)
+    middle_orbital_chart: object = field(default_factory=IGCR2LeftUnitaryChart)
     right_orbital_chart_override: object = field(default_factory=GCR2TraceFixedFullUnitaryChart)
     real_right_orbital_chart: bool = False
     left_right_ov_relative_scale: float | None = None
@@ -1940,14 +1895,24 @@ class GCRPairUCCDParameterization:
         kwargs = {
             "norb": self.norb,
             "nocc": self.nocc,
+            "nelec": self.nelec,
+            "layers": self.layers,
+            "shared_diagonal": self.shared_diagonal,
+            "interaction_pairs": self.interaction_pairs,
+            "tau_indices_": self.tau_indices_,
+            "omega_indices_": self.omega_indices_,
+            "eta_indices_": self.eta_indices_,
+            "rho_indices_": self.rho_indices_,
+            "sigma_indices_": self.sigma_indices_,
+            "reduce_cubic_gauge": self.reduce_cubic_gauge,
+            "reduce_quartic_gauge": self.reduce_quartic_gauge,
             "base_parameterization": self.base_parameterization,
             "left_orbital_chart": self.left_orbital_chart,
+            "middle_orbital_chart": self.middle_orbital_chart,
             "right_orbital_chart_override": self.right_orbital_chart_override,
             "real_right_orbital_chart": self.real_right_orbital_chart,
             "left_right_ov_relative_scale": self.left_right_ov_relative_scale,
         }
-        if self.order == 2:
-            kwargs["interaction_pairs"] = self.interaction_pairs
         if self.order >= 3:
             kwargs["tau_seed_scale"] = self.tau_seed_scale
             kwargs["omega_seed_scale"] = self.omega_seed_scale
