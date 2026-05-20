@@ -362,6 +362,47 @@ def test_igcr_sequence_backend_matches_legacy_one_layer_blocks_and_state():
             )
 
 
+def test_igcr_layered_sequence_backend_matches_canonical_state_and_order():
+    reference = hartree_fock_state(4, (2, 2))
+    rng = np.random.default_rng(4321)
+
+    for order in (2, 3, 4):
+        canonical = IGCR(order=order, norb=4, nocc=2, layers=3)
+        sequence = IGCR(order=order, norb=4, nocc=2, layers=3, backend="sequence")
+        params = rng.normal(scale=1.0e-3, size=canonical.n_params)
+
+        assert sequence.n_params == canonical.n_params
+        assert tuple(gate.name for gate in sequence.gates) == (
+            "left",
+            "diagonal_0",
+            "middle_0",
+            "diagonal_1",
+            "middle_1",
+            "diagonal_2",
+            "right",
+        )
+        assert sequence.parameter_order == (0, 1, 3, 5, 2, 4, 6)
+
+        block_names = tuple(block.name for block in sequence.parameter_blocks())
+        assert block_names[0] == "left"
+        assert block_names[-1] == "right"
+        assert block_names.index("middle_0") > block_names.index("diagonal_2.pair")
+        assert block_names.index("middle_1") > block_names.index("diagonal_2.pair")
+        assert sequence.parameter_blocks()[-1].stop == canonical.n_params
+
+        canonical_state = canonical.ansatz_from_parameters(params).apply(
+            reference,
+            nelec=(2, 2),
+            copy=True,
+        )
+        sequence_state = sequence.ansatz_from_parameters(params).apply(
+            reference,
+            nelec=(2, 2),
+            copy=True,
+        )
+        _assert_allclose_up_to_phase(sequence_state, canonical_state, atol=1.0e-12)
+
+
 def test_igcr_sequence_backend_parameters_from_ansatz_matches_legacy_gauge():
     reference = hartree_fock_state(4, (2, 2))
     rng = np.random.default_rng(5678)
@@ -397,9 +438,11 @@ def test_igcr_sequence_backend_is_opt_in_and_rejects_unsupported_cases():
         IGCR(order=3, norb=4, nocc=2, backend="sequence"),
         GateSequenceParameterization,
     )
+    assert isinstance(
+        IGCR(order=2, norb=4, nocc=2, layers=2, backend="sequence"),
+        GateSequenceParameterization,
+    )
 
-    with pytest.raises(NotImplementedError, match="layers=1"):
-        IGCR(order=2, norb=4, nocc=2, layers=2, backend="sequence")
     with pytest.raises(NotImplementedError, match="shared_diagonal"):
         IGCR(order=2, norb=4, nocc=2, shared_diagonal=True, backend="sequence")
     with pytest.raises(NotImplementedError, match="spin='restricted'"):

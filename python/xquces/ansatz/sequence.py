@@ -22,6 +22,7 @@ class GateSequenceParameterization:
     native_parameters_from_public: Callable[[np.ndarray], np.ndarray] | None = None
     ansatz_parameters_from_instance: Callable[[object], np.ndarray] | None = None
     default_nelec: tuple[int, int] | None = None
+    parameter_order: tuple[int, ...] | None = None
 
     def __post_init__(self) -> None:
         if self.default_nelec is not None:
@@ -30,6 +31,20 @@ class GateSequenceParameterization:
                 "default_nelec",
                 tuple(int(x) for x in self.default_nelec),
             )
+        if self.parameter_order is None:
+            object.__setattr__(
+                self,
+                "parameter_order",
+                tuple(range(len(self.gates))),
+            )
+        else:
+            order = tuple(int(idx) for idx in self.parameter_order)
+            expected = tuple(range(len(self.gates)))
+            if tuple(sorted(order)) != expected:
+                raise ValueError(
+                    "parameter_order must be a permutation of gate indices"
+                )
+            object.__setattr__(self, "parameter_order", order)
 
     @property
     def n_params(self) -> int:
@@ -38,7 +53,8 @@ class GateSequenceParameterization:
     def parameter_blocks(self) -> tuple[ParameterBlock, ...]:
         blocks: list[ParameterBlock] = []
         offset = 0
-        for gate in self.gates:
+        for gate_idx in self.parameter_order:
+            gate = self.gates[gate_idx]
             for block in gate.blocks():
                 blocks.append(block.with_offset(offset))
             offset += int(gate.n_params)
@@ -65,11 +81,12 @@ class GateSequenceParameterization:
                     "native_parameters_from_public returned shape "
                     f"{params.shape}; expected {(self.n_params,)}."
                 )
-        instances = []
+        instances = [None] * len(self.gates)
         start = 0
-        for gate in self.gates:
+        for gate_idx in self.parameter_order:
+            gate = self.gates[gate_idx]
             stop = start + int(gate.n_params)
-            instances.append(gate.instance_from_parameters(params[start:stop]))
+            instances[gate_idx] = gate.instance_from_parameters(params[start:stop])
             start = stop
         return tuple(instances)
 
