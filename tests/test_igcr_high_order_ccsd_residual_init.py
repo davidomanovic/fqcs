@@ -7,6 +7,7 @@ import ffsim
 import numpy as np
 import pyscf.lib
 
+from xquces.ansatz.jacobian import make_state_subspace_jacobian
 from xquces.gcr.igcr import (
     CCSDResidualSeedInfo as LegacyCCSDResidualSeedInfo,
     IGCR2SpinRestrictedParameterization,
@@ -420,6 +421,28 @@ def test_ccsd_residual_seed_info_import_compatibility():
     assert PublicCCSDResidualSeedInfo is CCSDResidualSeedInfo
 
 
+def test_active_block_subspace_jacobian_matches_full_columns():
+    rng = np.random.default_rng(713)
+    norb = 4
+    nocc = 2
+    nelec = (nocc, nocc)
+    reference = ffsim.hartree_fock_state(norb, nelec)
+    param = IGCR4SpinRestrictedParameterization(norb=norb, nocc=nocc)
+    fixed = param.apply(reference, nelec)
+    x = 0.01 * rng.standard_normal(param.n_params)
+    columns = _block_column_indices(param, ("quartic",))
+    directions = np.zeros((param.n_params, len(columns)), dtype=np.float64)
+    directions[columns, np.arange(len(columns))] = 1.0
+
+    full_block = fixed.state_jacobian_from_parameters(x)[:, columns]
+    subspace_block = make_state_subspace_jacobian(param, reference, nelec)(
+        x,
+        directions,
+    )
+
+    np.testing.assert_allclose(subspace_block, full_block, atol=1.0e-10, rtol=1.0e-10)
+
+
 def test_library_ccsd_residual_seed_direct_helper_matches_public_method():
     rng = np.random.default_rng(321)
     norb = 4
@@ -479,6 +502,74 @@ def test_library_ccsd_residual_seed_return_info_fields_are_populated():
     assert len(info.scales) == 1
     assert np.isfinite(info.overlap_before)
     assert np.isfinite(info.overlap_after)
+
+
+def test_residual_seed_can_skip_rank_diagnostic_and_stop_on_overlap_gain():
+    rng = np.random.default_rng(886)
+    norb = 4
+    nocc = 2
+    t1 = 0.02 * rng.standard_normal((nocc, norb - nocc))
+    t2 = 0.02 * rng.standard_normal((nocc, nocc, norb - nocc, norb - nocc))
+    param = IGCR4SpinRestrictedParameterization(norb=norb, nocc=nocc)
+
+    info = param.parameters_from_t_amplitudes(
+        t2,
+        t1=t1,
+        strategy="ccsd_residual",
+        igcr2_strategy="ucj",
+        n_iter=5,
+        min_overlap_gain=1.0,
+        compute_jacobian_rank=False,
+        return_info=True,
+    )
+
+    assert len(info.delta_norms) == 1
+    assert info.jacobian_ranks == (-1,)
+
+
+def test_igcr4_seed_can_reuse_precomputed_igcr3_params():
+    rng = np.random.default_rng(987)
+    norb = 4
+    nocc = 2
+    t1 = 0.02 * rng.standard_normal((nocc, norb - nocc))
+    t2 = 0.02 * rng.standard_normal((nocc, nocc, norb - nocc, norb - nocc))
+
+    igcr3_param = IGCR3SpinRestrictedParameterization(norb=norb, nocc=nocc)
+    igcr3_info = igcr3_param.parameters_from_t_amplitudes(
+        t2,
+        t1=t1,
+        strategy="ccsd_residual",
+        igcr2_strategy="ucj",
+        n_iter=1,
+        target_max_power=3,
+        return_info=True,
+    )
+    igcr4_param = IGCR4SpinRestrictedParameterization(norb=norb, nocc=nocc)
+
+    recomputed = igcr4_param.parameters_from_t_amplitudes(
+        t2,
+        t1=t1,
+        strategy="ccsd_residual",
+        igcr3_strategy="ccsd_residual",
+        igcr2_strategy="ucj",
+        igcr3_options={"n_iter": 1, "target_max_power": 3},
+        active_blocks=("quartic",),
+        n_iter=1,
+        return_info=True,
+    )
+    reused = igcr4_param.parameters_from_t_amplitudes(
+        t2,
+        t1=t1,
+        strategy="ccsd_residual",
+        igcr3_strategy="ccsd_residual",
+        igcr2_strategy="ucj",
+        igcr3_params=igcr3_info.params,
+        active_blocks=("quartic",),
+        n_iter=1,
+        return_info=True,
+    )
+
+    np.testing.assert_allclose(reused.params, recomputed.params, atol=1.0e-12, rtol=0.0)
 
 
 def test_library_ccsd_residual_default_active_blocks_prefer_reduced_blocks():

@@ -72,6 +72,9 @@ def igcr3_parameters_from_t_amplitudes(
             (0.0, 0.05, 0.1, 0.2, 0.4, 0.7, 1.0),
         ),
         n_iter=seed_options.pop("n_iter", 3),
+        min_step_norm=seed_options.pop("min_step_norm", 0.0),
+        min_overlap_gain=seed_options.pop("min_overlap_gain", 0.0),
+        compute_jacobian_rank=seed_options.pop("compute_jacobian_rank", True),
         return_info=seed_options.pop("return_info", False),
     )
 
@@ -118,15 +121,28 @@ def igcr4_parameters_from_t_amplitudes(
         "max_step_norm",
         "scale_scan",
         "n_iter",
+        "min_step_norm",
+        "min_overlap_gain",
+        "compute_jacobian_rank",
     ):
         if key in seed_options and key not in igcr3_options:
             igcr3_options[key] = seed_options[key]
-    igcr3_params = igcr3_param.parameters_from_t_amplitudes(
-        t2,
-        t1=t1,
-        strategy=igcr3_strategy,
-        **igcr3_options,
-    )
+    igcr3_params = seed_options.pop("igcr3_params", None)
+    if igcr3_params is None:
+        igcr3_params = igcr3_param.parameters_from_t_amplitudes(
+            t2,
+            t1=t1,
+            strategy=igcr3_strategy,
+            **igcr3_options,
+        )
+    else:
+        igcr3_params = getattr(igcr3_params, "params", igcr3_params)
+        igcr3_params = np.asarray(igcr3_params, dtype=np.float64)
+        if igcr3_params.shape != (igcr3_param.n_params,):
+            raise ValueError(
+                f"igcr3_params must have shape {(igcr3_param.n_params,)}, "
+                f"got {igcr3_params.shape}."
+            )
     igcr3_ansatz = igcr3_param.ansatz_from_parameters(igcr3_params)
     x_base = parameterization.parameters_from_igcr3_ansatz(
         igcr3_ansatz,
@@ -159,6 +175,8 @@ def igcr4_parameters_from_t_amplitudes(
             (0.0, 0.05, 0.1, 0.2, 0.4, 0.7, 1.0),
         ),
         n_iter=seed_options.pop("n_iter", 3),
+        min_step_norm=seed_options.pop("min_step_norm", 0.0),
+        min_overlap_gain=seed_options.pop("min_overlap_gain", 0.0),
+        compute_jacobian_rank=seed_options.pop("compute_jacobian_rank", True),
         return_info=seed_options.pop("return_info", False),
     )
-

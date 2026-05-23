@@ -8,17 +8,24 @@ import numpy as np
 from xquces.ansatz.blocks import parameter_blocks
 
 
+_SUBSPACE_JACOBIAN_DIRECTION_CHUNK = 256
+
+
 def _solve_real_tikhonov(
     columns: np.ndarray, target: np.ndarray, damping: float
 ) -> np.ndarray:
     columns = np.asarray(columns, dtype=np.complex128)
     target = np.asarray(target, dtype=np.complex128)
     A = np.vstack([columns.real, columns.imag])
-    b = np.concatenate([target.real, target.imag])
+    b = np.concatenate([target.real, target.imag], axis=0)
     if damping > 0.0:
         n = columns.shape[1]
         A = np.vstack([A, np.sqrt(float(damping)) * np.eye(n)])
-        b = np.concatenate([b, np.zeros(n, dtype=np.float64)])
+        if target.ndim == 1:
+            zeros = np.zeros(n, dtype=np.float64)
+        else:
+            zeros = np.zeros((n, target.shape[1]), dtype=np.float64)
+        b = np.concatenate([b, zeros], axis=0)
     coeff, *_ = np.linalg.lstsq(A, b, rcond=None)
     return np.asarray(coeff, dtype=np.float64)
 
@@ -137,6 +144,50 @@ def _block_column_indices(
     return np.asarray(indices, dtype=np.int64)
 
 
+def _active_state_jacobian_columns(
+    parameterization: object,
+    reference: np.ndarray,
+    nelec: tuple[int, int],
+    fixed: object,
+    params: np.ndarray,
+    columns: np.ndarray,
+    state_dim: int,
+) -> np.ndarray:
+    columns = np.asarray(columns, dtype=np.int64)
+    n_params = int(parameterization.n_params)
+    if columns.size == n_params and np.array_equal(columns, np.arange(n_params)):
+        return np.asarray(
+            fixed.state_jacobian_from_parameters(params),
+            dtype=np.complex128,
+        )
+    if columns.size == 0:
+        return np.zeros((state_dim, 0), dtype=np.complex128)
+
+    try:
+        from xquces.ansatz.jacobian import make_state_subspace_jacobian
+
+        subspace_jacobian = make_state_subspace_jacobian(
+            parameterization,
+            reference,
+            nelec,
+        )
+    except NotImplementedError:
+        jacobian = fixed.state_jacobian_from_parameters(params)
+        return np.asarray(jacobian[:, columns], dtype=np.complex128)
+
+    out = np.empty((state_dim, columns.size), dtype=np.complex128)
+    for start in range(0, columns.size, _SUBSPACE_JACOBIAN_DIRECTION_CHUNK):
+        stop = min(start + _SUBSPACE_JACOBIAN_DIRECTION_CHUNK, columns.size)
+        chunk = columns[start:stop]
+        directions = np.zeros((n_params, chunk.size), dtype=np.float64)
+        directions[chunk, np.arange(chunk.size)] = 1.0
+        out[:, start:stop] = np.asarray(
+            subspace_jacobian(params, directions),
+            dtype=np.complex128,
+        )
+    return out
+
+
 def _default_high_order_residual_blocks(
     parameterization: object,
     reduced_name: str,
@@ -168,6 +219,9 @@ def _state_residual_match_parameters(
         1.0,
     ),
     n_iter: int = 3,
+    min_step_norm: float = 0.0,
+    min_overlap_gain: float = 0.0,
+    compute_jacobian_rank: bool = True,
 ) -> CCSDResidualSeedInfo:
     """Gauss-Newton state matching to a CCSD target without using a Hamiltonian."""
     x = np.asarray(x_base, dtype=np.float64).copy()
@@ -192,43 +246,68 @@ def _state_residual_match_parameters(
     for _ in range(int(n_iter)):
         psi = fixed.state_from_parameters(x)
         target = _phase_align_target(target_state, psi)
+        current_overlap = _state_overlap(target, psi)
         residual = target - psi
         residual -= psi * np.vdot(psi, residual)
 
-        jacobian = fixed.state_jacobian_from_parameters(x)
-        jacobian_block = np.array(jacobian[:, columns], copy=True, dtype=np.complex128)
+        jacobian_block = _active_state_jacobian_columns(
+            parameterization,
+            reference,
+            nelec,
+            fixed,
+            x,
+            columns,
+            psi.size,
+        )
         jacobian_block -= psi[:, None] * (psi.conj() @ jacobian_block)[None, :]
 
         delta = _solve_real_tikhonov(jacobian_block, residual, damping)
         raw_delta_norm = float(np.linalg.norm(delta))
+        raw_state_step_norm = float(np.linalg.norm(jacobian_block @ delta))
         delta_norm = raw_delta_norm
-        if delta_norm > max_step_norm:
-            delta *= float(max_step_norm) / delta_norm
-            delta_norm = float(max_step_norm)
+        if raw_state_step_norm > max_step_norm:
+            delta *= float(max_step_norm) / raw_state_step_norm
+            delta_norm = float(np.linalg.norm(delta))
 
         step = np.zeros_like(x, dtype=np.float64)
         step[columns] = delta
-        rank = int(np.linalg.matrix_rank(_real_stacked(jacobian_block)))
+        if compute_jacobian_rank:
+            rank = int(np.linalg.matrix_rank(_real_stacked(jacobian_block)))
+        else:
+            rank = -1
 
         scale = 1.0
+        psi_next = None
         if scale_scan is not None:
             scale = 0.0
-            local_best_overlap = _state_overlap(target, psi)
+            local_best_overlap = current_overlap
+            local_best_state = psi
             for candidate in scale_scan:
                 candidate = float(candidate)
-                candidate_x = x + candidate * step
-                candidate_state = fixed.state_from_parameters(candidate_x)
+                if candidate == 0.0:
+                    candidate_state = psi
+                else:
+                    candidate_x = x + candidate * step
+                    candidate_state = fixed.state_from_parameters(candidate_x)
                 candidate_overlap = _state_overlap(target, candidate_state)
                 if candidate_overlap > local_best_overlap + 1.0e-14:
                     local_best_overlap = candidate_overlap
                     scale = candidate
+                    local_best_state = candidate_state
+            psi_next = local_best_state
 
         x_next = x + scale * step
-        psi_next = fixed.state_from_parameters(x_next)
-        overlap_next = _state_overlap(_phase_align_target(target_state, psi_next), psi_next)
+        if psi_next is None:
+            psi_next = fixed.state_from_parameters(x_next)
+        overlap_next = _state_overlap(
+            _phase_align_target(target_state, psi_next),
+            psi_next,
+        )
+        accepted_delta_norm = float(abs(scale) * delta_norm)
+        overlap_gain = float(overlap_next - current_overlap)
 
         raw_delta_norms.append(raw_delta_norm)
-        delta_norms.append(float(abs(scale) * delta_norm))
+        delta_norms.append(accepted_delta_norm)
         jacobian_ranks.append(rank)
         scales.append(float(scale))
 
@@ -237,6 +316,10 @@ def _state_residual_match_parameters(
             best_x = x_next.copy()
 
         if scale == 0.0:
+            break
+        if min_step_norm > 0.0 and accepted_delta_norm <= min_step_norm:
+            break
+        if min_overlap_gain > 0.0 and overlap_gain <= min_overlap_gain:
             break
         x = x_next
 
@@ -273,6 +356,9 @@ def _parameters_from_ccsd_residual_seed(
         1.0,
     ),
     n_iter: int = 3,
+    min_step_norm: float = 0.0,
+    min_overlap_gain: float = 0.0,
+    compute_jacobian_rank: bool = True,
     return_info: bool = False,
 ) -> np.ndarray | CCSDResidualSeedInfo:
     norb = int(parameterization.norb)
@@ -299,6 +385,8 @@ def _parameters_from_ccsd_residual_seed(
         max_step_norm=max_step_norm,
         scale_scan=scale_scan,
         n_iter=n_iter,
+        min_step_norm=min_step_norm,
+        min_overlap_gain=min_overlap_gain,
+        compute_jacobian_rank=compute_jacobian_rank,
     )
     return info if return_info else info.params
-
