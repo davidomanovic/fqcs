@@ -7,6 +7,7 @@ import pyscf.ao2mo
 import pyscf.fci
 import pyscf.mcscf
 import scipy.linalg
+from scipy.sparse.linalg import LinearOperator
 
 from xquces.basis import reshape_state, sector_shape
 
@@ -55,6 +56,20 @@ def _dense_matrix_from_matvec(matvec, dim: int) -> np.ndarray:
 def _validate_square_matrix(matrix: np.ndarray, name: str) -> None:
     if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1]:
         raise ValueError(f"{name} must be a square matrix")
+
+
+def _as_linear_operator_with_core(ham) -> LinearOperator:
+    dim = _sector_dimension(ham.norb, ham.nelec)
+
+    def matvec(v):
+        v = np.asarray(v, dtype=np.complex128).reshape(-1)
+        return ham.matvec(v) + ham.ecore * v
+
+    def matmat(vs):
+        vs = np.asarray(vs, dtype=np.complex128)
+        return np.column_stack([matvec(vs[:, j]) for j in range(vs.shape[1])])
+
+    return LinearOperator((dim, dim), matvec=matvec, matmat=matmat, dtype=np.complex128)
 
 
 @dataclass(frozen=True)
@@ -112,6 +127,9 @@ class MolecularHamiltonianLinearOperator:
     def dense_electronic_matrix(self) -> np.ndarray:
         dim = _sector_dimension(self.norb, self.nelec)
         return _dense_matrix_from_matvec(self.matvec, dim)
+
+    def as_linear_operator(self) -> LinearOperator:
+        return _as_linear_operator_with_core(self)
 
     def expectation(self, vec: np.ndarray) -> float:
         arr = np.asarray(vec, dtype=np.complex128).reshape(-1)
@@ -229,6 +247,9 @@ class CanonicalTransformedHamiltonianLinearOperator:
 
     def dense_electronic_matrix(self) -> np.ndarray:
         return np.array(self.h_matrix, copy=True)
+
+    def as_linear_operator(self) -> LinearOperator:
+        return _as_linear_operator_with_core(self)
 
     def physical_expectation(self, vec: np.ndarray) -> float:
         return float(self.base.expectation(vec))
