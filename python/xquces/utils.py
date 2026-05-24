@@ -44,11 +44,11 @@ def build_h4_rectangle(
 
     return _build_hydrogen_mol(coords, basis, symmetry=symmetry)
 
-def build_hydrogen_ring(bond_length: float, n: int, basis: str, *, symmetry: str = "D2h"):
+def build_hydrogen_ring(R: float, n: int, basis: str, *, symmetry: str = "D2h"):
     if n < 4 or n % 2:
         raise ValueError("n must be an even integer >= 4")
 
-    radius = float(bond_length) / (2.0 * np.sin(np.pi / n))
+    radius = float(R) / (2.0 * np.sin(np.pi / n))
     atoms = [
         (
             "H",
@@ -91,7 +91,7 @@ def _build_hydrogen_mol(
 
 
 def build_hydrogen_ladder(
-    bond_length: float,
+    R: float,
     nx: int,
     basis: str,
     *,
@@ -106,7 +106,7 @@ def build_hydrogen_ladder(
     if nx * ny % 2:
         raise ValueError("nx * ny must be even for spin=0")
 
-    r = float(bond_length)
+    r = float(R)
 
     coords = [(i * r, j * r, 0.0) for j in range(ny) for i in range(nx)]
 
