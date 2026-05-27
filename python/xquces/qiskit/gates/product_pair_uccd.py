@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import cmath
+import math
 from collections.abc import Iterator, Sequence
 
 import numpy as np
-from ffsim.qiskit.gates import PrepareHartreeFockJW, PrepareSlaterDeterminantSpinlessJW
 from qiskit.circuit import CircuitInstruction, Gate, QuantumCircuit, QuantumRegister, Qubit
 from qiskit.circuit.library import CXGate, SwapGate, UnitaryGate, XGate, XXPlusYYGate
 
@@ -218,7 +219,10 @@ def product_pair_uccd_stateprep_jw_circuit(
             restore_order=False,
         )
     elif strategy == "spin_orbital":
-        circuit.append(PrepareHartreeFockJW(int(norb), nelec), circuit.qubits)
+        for p in range(nelec[0]):
+            circuit.x(p)
+        for p in range(nelec[1]):
+            circuit.x(int(norb) + p)
         circuit.append(ProductPairUCCDJW(norb, nelec, params, time=time), circuit.qubits)
         return circuit
     else:
@@ -390,17 +394,108 @@ def _product_pair_uccd_pair_register_slater_stateprep_jw(
     if len(qubits) != 2 * norb:
         raise ValueError("Expected 2 * norb qubits.")
     nocc = nelec[0]
-    orbital_rotation = _pair_register_orbital_rotation(norb, nocc, params, time=time)
-    yield CircuitInstruction(
-        PrepareSlaterDeterminantSpinlessJW(
-            norb,
-            range(nocc),
-            orbital_rotation=orbital_rotation,
-        ),
-        tuple(qubits[:norb]),
+    pair_qubits = tuple(qubits[:norb])
+    occupied_orbitals = _pair_register_occupied_orbitals(
+        norb,
+        nocc,
+        params,
+        time=time,
+    )
+    yield from _prepare_spinless_slater_occupied_orbitals_jw(
+        pair_qubits,
+        occupied_orbitals,
     )
     for p in range(norb):
         yield CircuitInstruction(CXGate(), (qubits[p], qubits[norb + p]))
+
+
+def _pair_register_occupied_orbitals(
+    norb: int,
+    nocc: int,
+    params: np.ndarray,
+    *,
+    time: float,
+) -> np.ndarray:
+    orbital_rotation = _pair_register_orbital_rotation(norb, nocc, params, time=time)
+    return orbital_rotation[:, :nocc]
+
+
+def _prepare_spinless_slater_occupied_orbitals_jw(
+    qubits: Sequence[Qubit],
+    occupied_orbitals: np.ndarray,
+) -> Iterator[CircuitInstruction]:
+    occupied_orbitals = np.asarray(occupied_orbitals, dtype=np.complex128)
+    norb = len(qubits)
+    if occupied_orbitals.ndim != 2 or occupied_orbitals.shape[0] != norb:
+        raise ValueError(
+            "occupied_orbitals must have shape (norb, n_particles), "
+            f"got {occupied_orbitals.shape}."
+        )
+    n_particles = occupied_orbitals.shape[1]
+    for p in range(n_particles):
+        yield CircuitInstruction(XGate(), (qubits[p],))
+    if n_particles == norb:
+        return
+    for c, s, i, j in _slater_givens_rotations(occupied_orbitals.T):
+        theta = math.acos(max(-1.0, min(1.0, c)))
+        if abs(s.imag) <= 1e-12:
+            if s.real > 0:
+                theta = -theta
+            yield CircuitInstruction(
+                PairRegisterUCCDGivensJW(theta),
+                (qubits[i], qubits[j]),
+            )
+        else:
+            yield CircuitInstruction(
+                XXPlusYYGate(2.0 * theta, cmath.phase(s) - 0.5 * math.pi),
+                (qubits[i], qubits[j]),
+            )
+
+
+def _slater_givens_rotations(
+    orbital_coeffs: np.ndarray,
+    *,
+    atol: float = 1e-12,
+) -> list[tuple[float, complex, int, int]]:
+    n_particles, norb = orbital_coeffs.shape
+    current = np.array(orbital_coeffs, dtype=np.complex128, copy=True)
+    rotations: list[tuple[float, complex, int, int]] = []
+
+    for col in reversed(range(norb - n_particles + 1, norb)):
+        for row in range(n_particles - norb + col):
+            if abs(current[row, col]) <= atol:
+                continue
+            c, s = _givens_zero_second(current[row + 1, col], current[row, col])
+            lower = np.array(current[row + 1], copy=True)
+            upper = np.array(current[row], copy=True)
+            current[row + 1] = c * lower + s * upper
+            current[row] = c * upper - np.conjugate(s) * lower
+
+    for row in range(n_particles):
+        for col in range(norb - n_particles + row, row, -1):
+            if abs(current[row, col]) <= atol:
+                continue
+            c, s = _givens_zero_second(current[row, col - 1], current[row, col])
+            rotations.append((c, s, col, col - 1))
+            left = np.array(current[:, col - 1], copy=True)
+            right = np.array(current[:, col], copy=True)
+            current[:, col - 1] = c * left + s * right
+            current[:, col] = c * right - np.conjugate(s) * left
+
+    return rotations[::-1]
+
+
+def _givens_zero_second(a: complex, b: complex) -> tuple[float, complex]:
+    if b == 0:
+        return 1.0, 0.0j
+    norm = math.hypot(abs(a), abs(b))
+    if norm == 0.0:
+        return 1.0, 0.0j
+    if a == 0:
+        return 0.0, np.conjugate(b) / abs(b)
+    c = abs(a) / norm
+    s = c * np.conjugate(b / a)
+    return float(c), complex(s)
 
 
 def _pair_register_orbital_rotation(

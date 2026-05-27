@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+from qiskit import transpile
 from qiskit.quantum_info import Statevector
 
 from xquces.basis import sector_shape
@@ -12,7 +13,10 @@ from xquces.gcr.product_pair_uccd import (
     slater_pair_uccd_state_jacobian,
     slater_pair_uccd_state_vjp,
 )
-from xquces.qiskit.gates.product_pair_uccd import _pair_register_orbital_rotation
+from xquces.qiskit.gates.product_pair_uccd import (
+    _pair_register_occupied_orbitals,
+    _pair_register_orbital_rotation,
+)
 from xquces.qiskit.gates import product_pair_uccd_stateprep_jw_circuit
 from xquces.states import _doci_spatial_basis, _doci_subspace_indices
 
@@ -92,6 +96,57 @@ def test_state_equals_pair_register_slater_circuit():
         _assert_same_state(actual, expected, atol=1e-11)
 
 
+def test_pair_register_slater_uses_ov_sized_givens_product():
+    rng = np.random.default_rng(8080)
+    norb = 6
+    nelec = (3, 3)
+    params = rng.normal(scale=0.25, size=len(_pair_uccd_ov_pairs(norb, nelec[0])))
+
+    circuit = product_pair_uccd_stateprep_jw_circuit(
+        norb,
+        nelec,
+        params,
+        strategy="pair_register_slater",
+    )
+    ops = circuit.count_ops()
+
+    n_givens = ops.get("pair_register_uccd_givens_jw", 0) + ops.get("xx_plus_yy", 0)
+    assert n_givens == len(_pair_uccd_ov_pairs(norb, nelec[0]))
+    assert ops.get("cx", 0) == norb
+    assert ops.get("x", 0) == nelec[0]
+
+
+def test_pair_register_slater_reference_cost_no_worse_than_direct():
+    norb = 4
+    nelec = (2, 2)
+    params = np.zeros(len(_pair_uccd_ov_pairs(norb, nelec[0])))
+    basis_gates = ["cx", "rz", "sx", "x"]
+
+    slater = transpile(
+        product_pair_uccd_stateprep_jw_circuit(
+            norb,
+            nelec,
+            params,
+            strategy="pair_register_slater",
+        ),
+        basis_gates=basis_gates,
+        optimization_level=3,
+    )
+    direct = transpile(
+        product_pair_uccd_stateprep_jw_circuit(
+            norb,
+            nelec,
+            params,
+            strategy="pair_register_direct",
+        ),
+        basis_gates=basis_gates,
+        optimization_level=3,
+    )
+
+    assert slater.depth() <= direct.depth()
+    assert slater.count_ops().get("cx", 0) <= direct.count_ops().get("cx", 0)
+
+
 def test_orbital_rotation_helper_matches_circuit_convention():
     rng = np.random.default_rng(2468)
     norb = 6
@@ -111,9 +166,11 @@ def test_orbital_rotation_helper_matches_circuit_convention():
         time=0.7,
     )
     wrapped = _pair_register_orbital_rotation(norb, nelec[0], params, time=0.7)
+    occupied = _pair_register_occupied_orbitals(norb, nelec[0], params, time=0.7)
 
     assert np.allclose(actual, expected, atol=1e-14)
     assert np.allclose(wrapped, expected, atol=1e-14)
+    assert np.allclose(occupied, expected[:, : nelec[0]], atol=1e-14)
 
 
 def test_slater_pair_jacobian_matches_finite_difference():

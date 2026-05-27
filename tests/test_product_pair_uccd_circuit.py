@@ -57,6 +57,28 @@ def test_pair_register_swap_network_restores_logical_order():
     assert np.allclose(_state(optimized), _state(direct), atol=1e-12)
 
 
+def test_spin_orbital_stateprep_matches_direct_pair_register():
+    norb = 5
+    nelec = (2, 2)
+    rng = np.random.default_rng(13579)
+    params = rng.normal(scale=0.2, size=nelec[0] * (norb - nelec[0]))
+
+    spin_orbital = product_pair_uccd_stateprep_jw_circuit(
+        norb,
+        nelec,
+        params,
+        strategy="spin_orbital",
+    )
+    direct = product_pair_uccd_stateprep_jw_circuit(
+        norb,
+        nelec,
+        params,
+        strategy="pair_register_direct",
+    )
+
+    assert np.allclose(_state(spin_orbital), _state(direct), atol=1e-12)
+
+
 def test_gcr_pair_register_permutation_matches_direct_pair_register():
     norb = 6
     nocc = 3
