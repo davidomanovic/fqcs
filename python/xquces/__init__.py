@@ -20,14 +20,12 @@ from xquces.gcr.igcr import (
     IGCR4SpinRestrictedSpec,
     IGCRVariationalCircuit,
     apply_igcr3_spin_restricted_diagonal,
-    embed_ansatz_parameters,
     exact_reference_ov_params_from_unitary,
     exact_reference_ov_unitary,
     igcr3_from_igcr2_ansatz,
     orbital_relabeling_from_overlap,
     parameter_blocks,
     parameter_view,
-    parameters_from_t2,
     random_parameters,
     reduce_spin_balanced,
     reduce_spin_restricted,
@@ -131,6 +129,7 @@ from xquces.ucj.parameterization import (
 )
 from xquces.optimize.linear_method import minimize_linear_method
 from xquces.presets import IGCR, PairUCCD_GCR
+from xquces.seeds.dispatch import embed_ansatz_parameters, parameters_from_t2
 from xquces.utils import apply_spin_square, spin_square, build_hydrogen_ring
 
 __all__ = [

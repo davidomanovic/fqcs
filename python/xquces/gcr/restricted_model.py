@@ -144,17 +144,15 @@ class IGCR2Ansatz:
     @classmethod
     def from_t_amplitudes(cls, t2, t1=None, **seed_options) -> "IGCR2Ansatz":
         """Build a one-layer iGCR-2 ansatz from CCSD amplitudes natively."""
-        from xquces.gcr.igcr import (
-            IGCR2SpinRestrictedParameterization,
-            _native_igcr2_seed_from_ccsd_t_amplitudes,
-        )
+        from xquces.gcr.igcr import IGCR2SpinRestrictedParameterization
+        from xquces.seeds.native_igcr2 import native_igcr2_seed_from_ccsd_t_amplitudes
 
         nocc = np.asarray(t2).shape[0]
         nvirt = np.asarray(t2).shape[2]
         parameterization = IGCR2SpinRestrictedParameterization(
             norb=nocc + nvirt, nocc=nocc, layers=1
         )
-        result = _native_igcr2_seed_from_ccsd_t_amplitudes(
+        result = native_igcr2_seed_from_ccsd_t_amplitudes(
             parameterization, t2, t1=t1, **seed_options
         )
         assert isinstance(result, cls)
@@ -1234,4 +1232,3 @@ class IGCR4LayeredAnsatz:
                 nocc=generic.nocc,
             )
         return generic.to_igcr4_ansatz()
-

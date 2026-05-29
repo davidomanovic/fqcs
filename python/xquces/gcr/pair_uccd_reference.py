@@ -22,7 +22,6 @@ from xquces.gcr.igcr import (
     IGCR4Ansatz,
     IGCR4SpinRestrictedParameterization,
     IGCRSpinRestrictedParameterization,
-    layered_igcr2_from_ccsd_t_amplitudes,
     reduce_spin_restricted,
     relabel_igcr2_ansatz_orbitals,
     relabel_igcr3_ansatz_orbitals,
@@ -56,6 +55,7 @@ from xquces.gcr.product_pair_uccd import (
     PairUCCDStateParameterization,
     ProductPairUCCDStateParameterization,
 )
+from xquces.seeds.ucj import layered_igcr2_from_ccsd_t_amplitudes
 from xquces.ucj.model import UCJAnsatz
 
 

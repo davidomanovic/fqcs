@@ -4,7 +4,6 @@ from xquces.gcr.igcr import (
     GCRParameterBlock,
     ParameterBlock,
     ParameterView,
-    CCSDResidualSeedInfo,
     IGCR2Ansatz,
     IGCR2LayeredAnsatz,
     IGCR2BlockDiagLeftUnitaryChart,
@@ -27,14 +26,16 @@ from xquces.gcr.igcr import (
     IGCR4SpinRestrictedSpec,
     IGCRSpinRestrictedParameterization,
     IGCRVariationalCircuit,
-    embed_ansatz_parameters,
     igcr3_from_igcr2_ansatz,
-    layered_igcr2_from_ccsd_t_amplitudes,
-    layered_igcr2_from_ucj_t_amplitudes,
     parameter_blocks,
     parameter_view,
-    parameters_from_t2,
     random_parameters,
+)
+from xquces.seeds.dispatch import embed_ansatz_parameters, parameters_from_t2
+from xquces.seeds.residual import CCSDResidualSeedInfo
+from xquces.seeds.ucj import (
+    layered_igcr2_from_ccsd_t_amplitudes,
+    layered_igcr2_from_ucj_t_amplitudes,
 )
 from xquces.gcr.canonical import IGCRAnsatz, IGCRDiagonalCoefficients
 from xquces.gcr.canonical_lift import (

@@ -3,15 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable
 
-import ffsim
 import numpy as np
 
 from xquces.ansatz.blocks import (
-    _block_kind,
-    _block_shape,
-    _block_sizes,
-    _block_specs,
-    _layered_block_shape,
     parameter_blocks as _ansatz_parameter_blocks,
     parameter_view as _ansatz_parameter_view,
     random_parameters as _ansatz_random_parameters,
@@ -26,10 +20,6 @@ from xquces.charts.diagonal import (
     RestrictedQuarticCoefficients,
 )
 from xquces.charts.reductions import IGCR3CubicReduction, IGCR4QuarticReduction
-from xquces.gates import (
-    apply_gcr_spin_balanced,
-    apply_gcr_spin_restricted,
-)
 from xquces.gcr.charts import (
     GCR2FullUnitaryChart,
     GCR2TraceFixedFullUnitaryChart,
@@ -72,22 +62,11 @@ from xquces.gcr.canonical_transform import (
     transport_legacy_igcr_ansatz_orbitals,
 )
 from xquces.gcr.utils import (
-    _assert_square_matrix,
-    _balanced_irreducible_pair_matrices,
-    _balanced_left_phase_vector,
-    _default_eta_indices,
-    _default_pair_indices,
-    _default_rho_indices,
-    _default_sigma_indices,
-    _default_tau_indices,
-    _default_triple_indices,
     _diag_unitary,
     _final_unitary_from_left_and_right,
     _left_right_ov_adapted_to_native,
     _native_to_left_right_ov_adapted,
-    _ordered_matrix_from_values,
     _parameters_from_zero_diag_antihermitian,
-    _restricted_irreducible_pair_matrix,
     _restricted_left_phase_vector,
     _right_unitary_from_left_and_final,
     _symmetric_matrix_from_values,
@@ -96,22 +75,19 @@ from xquces.gcr.utils import (
     _validate_rho_indices,
     _validate_sigma_indices,
     _validate_triples,
-    _values_from_ordered_matrix,
-    _zero_diag_antihermitian_from_parameters,
     exact_reference_ov_params_from_unitary,
     exact_reference_ov_unitary,
     orbital_relabeling_from_overlap,
     orbital_transport_unitary_from_overlap,
 )
 from xquces.orbitals import apply_orbital_rotation
-from xquces.seeds.residual import CCSDResidualSeedInfo
-from xquces.ucj.init import (
-    CCSDDoubleFactorization,
-    UCJBalancedDFSeed,
-    UCJRestrictedProjectedDFSeed,
-    factorize_ccsd_t_amplitudes,
+from xquces.seeds.dispatch import parameters_from_t2 as _dispatch_parameters_from_t2
+from xquces.seeds.native_igcr2 import native_igcr2_seed_from_ccsd_t_amplitudes
+from xquces.seeds.ucj import (
+    _igcr2_layered_spin_restricted_ansatz_from_ucj,
+    layered_igcr2_from_ucj_t_amplitudes,
 )
-from xquces.ucj.model import SpinBalancedSpec, SpinRestrictedSpec, UCJAnsatz, UCJLayer
+from xquces.ucj.model import SpinBalancedSpec, UCJAnsatz
 
 
 @dataclass(frozen=True)
@@ -191,81 +167,6 @@ def _as_layered_igcr2_spin_restricted_ansatz(
     layers: int,
 ) -> IGCR2LayeredAnsatz:
     return as_legacy_layered_igcr_ansatz(ansatz, layers, order=2)
-
-
-def _igcr2_layered_spin_restricted_ansatz_from_ucj(
-    ansatz: UCJAnsatz,
-    nocc: int,
-    layers: int,
-) -> IGCR2LayeredAnsatz:
-    from xquces.seeds.ucj import _igcr2_layered_spin_restricted_ansatz_from_ucj as impl
-
-    return impl(ansatz, nocc, layers)
-
-
-def layered_igcr2_from_ucj_t_amplitudes(
-    t2: np.ndarray,
-    t1: np.ndarray | None = None,
-    *,
-    layers: int = 1,
-    nocc: int | None = None,
-    **df_options,
-) -> "IGCR2Ansatz | IGCR2LayeredAnsatz":
-    """Build an iGCR-2 ansatz by lifting ffsim's UCJ t-amplitude seed."""
-    from xquces.seeds.ucj import layered_igcr2_from_ucj_t_amplitudes as impl
-
-    return impl(t2, t1=t1, layers=layers, nocc=nocc, **df_options)
-
-
-def layered_igcr2_from_ccsd_t_amplitudes(
-    t2: np.ndarray,
-    t1: np.ndarray | None = None,
-    *,
-    layers: int = 1,
-    nocc: int | None = None,
-    **df_options,
-) -> "IGCR2Ansatz | IGCR2LayeredAnsatz":
-    """Compatibility alias for the UCJ-lift t-amplitude seed."""
-    from xquces.seeds.ucj import layered_igcr2_from_ccsd_t_amplitudes as impl
-
-    return impl(t2, t1=t1, layers=layers, nocc=nocc, **df_options)
-
-
-def _native_igcr2_seed_from_ccsd_t_amplitudes(
-    parameterization: "IGCR2SpinRestrictedParameterization",
-    t2: np.ndarray,
-    t1: np.ndarray | None = None,
-    *,
-    right_mixing_eps: tuple[float, ...] = (0.05, 0.1, 0.2, 0.4, 0.8),
-    target_scales: tuple[float, ...] = (0.05, 0.1, 0.2, 0.4),
-    j_mixing_scales: tuple[float, ...] = (0.0, 0.02, 0.05, 0.1, 0.2),
-    j_damping: float = 1.0e-8,
-    left_damping: float = 1.0e-8,
-    max_soft: int = 0,
-    cond_j_max: float = 1.0e12,
-    cond_s_max: float = 1.0e12,
-    hamiltonian: object | None = None,
-    verbose: bool = False,
-) -> IGCR2Ansatz:
-    from xquces.seeds.native_igcr2 import native_igcr2_seed_from_ccsd_t_amplitudes
-
-    return native_igcr2_seed_from_ccsd_t_amplitudes(
-        parameterization,
-        t2,
-        t1=t1,
-        right_mixing_eps=right_mixing_eps,
-        target_scales=target_scales,
-        j_mixing_scales=j_mixing_scales,
-        j_damping=j_damping,
-        left_damping=left_damping,
-        max_soft=max_soft,
-        cond_j_max=cond_j_max,
-        cond_s_max=cond_s_max,
-        hamiltonian=hamiltonian,
-        verbose=verbose,
-    )
-
-
 
 _AUTO_RIGHT_CHART = "auto"
 
@@ -937,7 +838,7 @@ class IGCRSpinRestrictedParameterization:
                 raise ValueError(f"Unknown iGCR2 t-amplitude seed strategy: {strategy!r}")
             for key in ("optimize", "regularization", "options"):
                 seed_options.pop(key, None)
-            ansatz = _native_igcr2_seed_from_ccsd_t_amplitudes(
+            ansatz = native_igcr2_seed_from_ccsd_t_amplitudes(
                 self, t2, t1=t1, **seed_options
             )
             return self.parameters_from_ansatz(ansatz)
@@ -1145,9 +1046,7 @@ class IGCRSpinRestrictedParameterization:
         source_order: int | None = None,
         **kwargs,
     ) -> np.ndarray:
-        from xquces.seeds.dispatch import parameters_from_t2 as dispatch_parameters_from_t2
-
-        return dispatch_parameters_from_t2(
+        return _dispatch_parameters_from_t2(
             self,
             t2,
             source_order=source_order,
@@ -1405,9 +1304,6 @@ class IGCR2SpinBalancedParameterization:
         return func
 
 
-
-
-
 def _as_layered_igcr3_spin_restricted_ansatz(
     ansatz: IGCR3Ansatz | IGCR3LayeredAnsatz,
     layers: int,
@@ -1451,8 +1347,6 @@ class IGCR3SpinRestrictedParameterization(IGCRSpinRestrictedParameterization):
         return super().ansatz_from_parameters(params).to_legacy()
 
 
-
-
 def igcr3_from_igcr2_ansatz(
     ansatz: IGCR2Ansatz | IGCR2LayeredAnsatz,
     *,
@@ -1464,9 +1358,6 @@ def igcr3_from_igcr2_ansatz(
         tau_scale=tau_scale,
         omega_scale=omega_scale,
     ).to_legacy()
-
-
-
 
 
 def _as_layered_igcr4_spin_restricted_ansatz(
@@ -1656,9 +1547,7 @@ class IGCRVariationalCircuit:
         active_only: bool = False,
         **kwargs,
     ) -> np.ndarray:
-        from xquces.seeds.dispatch import parameters_from_t2 as dispatch_parameters_from_t2
-
-        params = dispatch_parameters_from_t2(
+        params = _dispatch_parameters_from_t2(
             self.parameterization,
             t2,
             source_order=source_order,
@@ -1705,30 +1594,3 @@ def random_parameters(
         seed=seed,
         blocks=blocks,
     )
-
-
-def embed_ansatz_parameters(parameterization: object, ansatz: object) -> np.ndarray:
-    from xquces.seeds.dispatch import embed_ansatz_parameters as dispatch_embed_ansatz_parameters
-
-    return dispatch_embed_ansatz_parameters(parameterization, ansatz)
-
-
-def parameters_from_t2(
-    parameterization: object,
-    t2: np.ndarray,
-    *,
-    source_order: int | None = None,
-    **kwargs,
-) -> np.ndarray:
-    from xquces.seeds.dispatch import parameters_from_t2 as dispatch_parameters_from_t2
-
-    return dispatch_parameters_from_t2(
-        parameterization,
-        t2,
-        source_order=source_order,
-        **kwargs,
-    )
-
-
-
-

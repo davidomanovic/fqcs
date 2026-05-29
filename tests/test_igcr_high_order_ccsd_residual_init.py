@@ -8,8 +8,8 @@ import numpy as np
 import pyscf.lib
 
 from xquces.ansatz.jacobian import make_state_subspace_jacobian
+from xquces.gcr import CCSDResidualSeedInfo as GCRCCSDResidualSeedInfo
 from xquces.gcr.igcr import (
-    CCSDResidualSeedInfo as LegacyCCSDResidualSeedInfo,
     IGCR2SpinRestrictedParameterization,
     IGCR3SpinRestrictedParameterization,
     IGCR4SpinRestrictedParameterization,
@@ -417,7 +417,7 @@ def test_high_order_seed_module_matches_igcr4_method_ccsd_residual_info():
 
 
 def test_ccsd_residual_seed_info_import_compatibility():
-    assert LegacyCCSDResidualSeedInfo is CCSDResidualSeedInfo
+    assert GCRCCSDResidualSeedInfo is CCSDResidualSeedInfo
     assert PublicCCSDResidualSeedInfo is CCSDResidualSeedInfo
 
 

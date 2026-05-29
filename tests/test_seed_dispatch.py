@@ -7,8 +7,10 @@ from xquces.gcr.igcr import (
     IGCR2SpinRestrictedParameterization,
     IGCR3Ansatz,
     IGCR3SpinRestrictedParameterization,
-    embed_ansatz_parameters as legacy_embed_ansatz_parameters,
-    parameters_from_t2 as legacy_parameters_from_t2,
+)
+from xquces.gcr import (
+    embed_ansatz_parameters as gcr_embed_ansatz_parameters,
+    parameters_from_t2 as gcr_parameters_from_t2,
 )
 from xquces.presets import IGCR
 from xquces.seeds import (
@@ -33,27 +35,27 @@ def _small_t_amplitudes(seed: int = 900):
     return t1, t2
 
 
-def test_seed_dispatch_imports_and_compatibility_wrappers_work():
+def test_seed_dispatch_imports_and_public_exports_work():
     assert callable(embed_ansatz_parameters)
     assert callable(parameters_from_t2)
-    assert callable(legacy_embed_ansatz_parameters)
-    assert callable(legacy_parameters_from_t2)
+    assert callable(gcr_embed_ansatz_parameters)
+    assert callable(gcr_parameters_from_t2)
     assert callable(public_embed_ansatz_parameters)
     assert callable(public_parameters_from_t2)
 
 
-def test_embed_ansatz_parameters_matches_legacy_wrapper_for_lower_order_lift():
+def test_embed_ansatz_parameters_matches_gcr_export_for_lower_order_lift():
     source = IGCR2SpinRestrictedParameterization(norb=4, nocc=2)
     target = IGCR3SpinRestrictedParameterization(norb=4, nocc=2)
     params = np.linspace(-1.0e-3, 1.0e-3, source.n_params)
     ansatz = source.ansatz_from_parameters(params)
 
     direct = embed_ansatz_parameters(target, ansatz)
-    legacy = legacy_embed_ansatz_parameters(target, ansatz)
+    gcr_export = gcr_embed_ansatz_parameters(target, ansatz)
     method = target.parameters_from_igcr2_ansatz(ansatz)
 
     np.testing.assert_allclose(direct, method, atol=1.0e-14, rtol=0.0)
-    np.testing.assert_allclose(legacy, method, atol=1.0e-14, rtol=0.0)
+    np.testing.assert_allclose(gcr_export, method, atol=1.0e-14, rtol=0.0)
 
 
 def test_embed_ansatz_parameters_uses_sequence_inverter_owner_for_lifts():
@@ -69,7 +71,7 @@ def test_embed_ansatz_parameters_uses_sequence_inverter_owner_for_lifts():
     np.testing.assert_allclose(direct, expected, atol=1.0e-14, rtol=0.0)
 
 
-def test_parameters_from_t2_matches_wrappers_facade_and_circuit():
+def test_parameters_from_t2_matches_exports_facade_and_circuit():
     t1, t2 = _small_t_amplitudes(901)
     facade = IGCR(order=3, norb=4, nocc=2)
     options = {
@@ -80,13 +82,13 @@ def test_parameters_from_t2_matches_wrappers_facade_and_circuit():
     }
 
     direct = parameters_from_t2(facade, t2, **options)
-    legacy = legacy_parameters_from_t2(facade, t2, **options)
+    gcr_export = gcr_parameters_from_t2(facade, t2, **options)
     public = public_parameters_from_t2(facade, t2, **options)
     method = facade.parameters_from_t2(t2, **options)
     circuit = facade.circuit(hartree_fock_state(4, (2, 2)), (2, 2))
     circuit_params = circuit.parameters_from_t2(t2, **options)
 
-    np.testing.assert_allclose(legacy, direct, atol=1.0e-14, rtol=0.0)
+    np.testing.assert_allclose(gcr_export, direct, atol=1.0e-14, rtol=0.0)
     np.testing.assert_allclose(public, direct, atol=1.0e-14, rtol=0.0)
     np.testing.assert_allclose(method, direct, atol=1.0e-14, rtol=0.0)
     np.testing.assert_allclose(circuit_params, direct, atol=1.0e-14, rtol=0.0)
