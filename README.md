@@ -2,7 +2,7 @@
 
 Experimental quantum algorithms for electronic-structure calculations.
 
-`xquces` provides state-vector tools for generalized correlated rotations (GCR-$k$) for orders $k=2,3,4$,
+`xquces` provides state-vector tools for generalized correlated rotations (GCR-k) for orders $k=2,3,4$,
 irreducible GCR (iGCR-k), UCJ-style ansatzes, pair-UCCD references, and small
 variational workflows for quantum chemistry. The core abstractions are
 parameterizations: a parameterization owns a flat real parameter vector and
