@@ -1,18 +1,41 @@
 from __future__ import annotations
 
+import itertools
 from dataclasses import dataclass
 from functools import cache
 
 import numpy as np
 
-from xquces.gcr.utils import (
-    _default_eta_indices,
-    _default_pair_indices,
-    _default_rho_indices,
-    _default_sigma_indices,
-    _default_tau_indices,
-    _default_triple_indices,
-)
+
+def _default_pair_indices(norb: int) -> list[tuple[int, int]]:
+    return list(itertools.combinations(range(norb), 2))
+
+
+def _default_tau_indices(norb: int) -> list[tuple[int, int]]:
+    return [(p, q) for p in range(norb) for q in range(norb) if p != q]
+
+
+def _default_triple_indices(norb: int) -> list[tuple[int, int, int]]:
+    return list(itertools.combinations(range(norb), 3))
+
+
+def _default_eta_indices(norb: int) -> list[tuple[int, int]]:
+    return list(itertools.combinations(range(norb), 2))
+
+
+def _default_rho_indices(norb: int) -> list[tuple[int, int, int]]:
+    return [
+        (p, q, r)
+        for p in range(norb)
+        for q in range(norb)
+        if q != p
+        for r in range(q + 1, norb)
+        if r != p
+    ]
+
+
+def _default_sigma_indices(norb: int) -> list[tuple[int, int, int, int]]:
+    return list(itertools.combinations(range(norb), 4))
 
 
 @dataclass(frozen=True)
@@ -318,4 +341,3 @@ def _igcr4_quartic_reduction_matrices(norb: int, nocc: int):
         if col[pivot] < 0:
             physical[:, j] *= -1.0
     return gauge_cubic, gauge_quartic, physical
-

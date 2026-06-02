@@ -26,13 +26,13 @@ def igcr4_parameters_from_t_amplitudes(*args, **kwargs):
 
 
 def embed_ansatz_parameters(*args, **kwargs):
-    from xquces.seeds.dispatch import embed_ansatz_parameters as impl
+    from xquces.gcr.igcr import embed_ansatz_parameters as impl
 
     return impl(*args, **kwargs)
 
 
 def parameters_from_t2(*args, **kwargs):
-    from xquces.seeds.dispatch import parameters_from_t2 as impl
+    from xquces.gcr.igcr import parameters_from_t2 as impl
 
     return impl(*args, **kwargs)
 

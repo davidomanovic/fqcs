@@ -12,11 +12,6 @@ from qiskit.circuit import (
     Qubit,
 )
 
-from xquces.gcr.utils import (
-    _default_eta_indices,
-    _default_rho_indices,
-    _default_sigma_indices,
-)
 from xquces.qiskit.gates.diag_2 import (
     _as_real_vector,
     _as_square_real_matrix,
@@ -35,6 +30,25 @@ from xquces.qiskit.gates.phase_polynomial import (
     add_spin_restricted_diag3_number_products,
     add_spin_restricted_diag4_number_products,
 )
+
+
+def _default_eta_indices(norb: int) -> list[tuple[int, int]]:
+    return list(itertools.combinations(range(norb), 2))
+
+
+def _default_rho_indices(norb: int) -> list[tuple[int, int, int]]:
+    return [
+        (p, q, r)
+        for p in range(norb)
+        for q in range(norb)
+        if q != p
+        for r in range(q + 1, norb)
+        if r != p
+    ]
+
+
+def _default_sigma_indices(norb: int) -> list[tuple[int, int, int, int]]:
+    return list(itertools.combinations(range(norb), 4))
 
 
 def _as_eta_vector(eta_values: np.ndarray, norb: int) -> np.ndarray:

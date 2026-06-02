@@ -1,33 +1,202 @@
 from __future__ import annotations
 
+import itertools
 from dataclasses import dataclass
 
 import numpy as np
 
 from xquces.ansatz.parameters import ParameterBlock
 from xquces.charts.reductions import IGCR3CubicReduction, IGCR4QuarticReduction
-from xquces.gcr.utils import (
-    _default_eta_indices,
-    _default_pair_indices,
-    _default_rho_indices,
-    _default_sigma_indices,
-    _default_tau_indices,
-    _default_triple_indices,
-    _ordered_matrix_from_values,
-    _restricted_irreducible_pair_matrix,
-    _restricted_left_phase_vector,
-    _symmetric_matrix_from_values,
-    _validate_ordered_pairs,
-    _validate_pairs,
-    _validate_rho_indices,
-    _validate_sigma_indices,
-    _validate_triples,
-    _values_from_ordered_matrix,
-)
 
 
-def _prefixed(prefix: str, name: str) -> str:
-    return name if prefix == "" else f"{prefix}.{name}"
+def _default_pair_indices(norb: int) -> list[tuple[int, int]]:
+    return list(itertools.combinations(range(norb), 2))
+
+
+def _default_tau_indices(norb: int) -> list[tuple[int, int]]:
+    return [(p, q) for p in range(norb) for q in range(norb) if p != q]
+
+
+def _default_triple_indices(norb: int) -> list[tuple[int, int, int]]:
+    return list(itertools.combinations(range(norb), 3))
+
+
+def _default_eta_indices(norb: int) -> list[tuple[int, int]]:
+    return list(itertools.combinations(range(norb), 2))
+
+
+def _default_rho_indices(norb: int) -> list[tuple[int, int, int]]:
+    return [
+        (p, q, r)
+        for p in range(norb)
+        for q in range(norb)
+        if q != p
+        for r in range(q + 1, norb)
+        if r != p
+    ]
+
+
+def _default_sigma_indices(norb: int) -> list[tuple[int, int, int, int]]:
+    return list(itertools.combinations(range(norb), 4))
+
+
+def _validate_pairs(
+    pairs: list[tuple[int, int]] | None,
+    norb: int,
+    *,
+    allow_diagonal: bool = False,
+) -> list[tuple[int, int]]:
+    if pairs is None:
+        if allow_diagonal:
+            return list(itertools.combinations_with_replacement(range(norb), 2))
+        return _default_pair_indices(norb)
+    out = []
+    seen = set()
+    for p, q in pairs:
+        if not (0 <= p < norb and 0 <= q < norb):
+            raise ValueError("interaction pair index out of bounds")
+        if p > q:
+            raise ValueError("interaction pairs must be upper triangular")
+        if not allow_diagonal and p == q:
+            raise ValueError("diagonal interaction pairs are not allowed here")
+        if (p, q) in seen:
+            raise ValueError("interaction pairs must not contain duplicates")
+        seen.add((p, q))
+        out.append((p, q))
+    return out
+
+
+def _validate_ordered_pairs(
+    pairs: list[tuple[int, int]] | None,
+    norb: int,
+) -> list[tuple[int, int]]:
+    if pairs is None:
+        return _default_tau_indices(norb)
+    out = []
+    seen = set()
+    for p, q in pairs:
+        if not (0 <= p < norb and 0 <= q < norb):
+            raise ValueError("ordered-pair index out of bounds")
+        if p == q:
+            raise ValueError("ordered-pair diagonal entries are not allowed")
+        if (p, q) in seen:
+            raise ValueError("ordered pairs must not contain duplicates")
+        seen.add((p, q))
+        out.append((p, q))
+    return out
+
+
+def _validate_triples(
+    triples: list[tuple[int, int, int]] | None,
+    norb: int,
+) -> list[tuple[int, int, int]]:
+    if triples is None:
+        return _default_triple_indices(norb)
+    out = []
+    seen = set()
+    for p, q, r in triples:
+        if not (0 <= p < q < r < norb):
+            raise ValueError("triple indices must satisfy 0 <= p < q < r < norb")
+        if (p, q, r) in seen:
+            raise ValueError("triple indices must not contain duplicates")
+        seen.add((p, q, r))
+        out.append((p, q, r))
+    return out
+
+
+def _validate_rho_indices(
+    triples: list[tuple[int, int, int]] | None,
+    norb: int,
+) -> list[tuple[int, int, int]]:
+    if triples is None:
+        return _default_rho_indices(norb)
+    out = []
+    seen = set()
+    for p, q, r in triples:
+        if not (0 <= p < norb and 0 <= q < norb and 0 <= r < norb):
+            raise ValueError("rho indices out of bounds")
+        if p == q or p == r or q == r:
+            raise ValueError("rho indices must be distinct")
+        if q >= r:
+            raise ValueError("rho indices must satisfy q < r")
+        if (p, q, r) in seen:
+            raise ValueError("rho indices must not contain duplicates")
+        seen.add((p, q, r))
+        out.append((p, q, r))
+    return out
+
+
+def _validate_sigma_indices(
+    quads: list[tuple[int, int, int, int]] | None,
+    norb: int,
+) -> list[tuple[int, int, int, int]]:
+    if quads is None:
+        return _default_sigma_indices(norb)
+    out = []
+    seen = set()
+    for p, q, r, s in quads:
+        if not (0 <= p < q < r < s < norb):
+            raise ValueError("sigma indices must satisfy 0 <= p < q < r < s < norb")
+        if (p, q, r, s) in seen:
+            raise ValueError("sigma indices must not contain duplicates")
+        seen.add((p, q, r, s))
+        out.append((p, q, r, s))
+    return out
+
+
+def _symmetric_matrix_from_values(
+    values: np.ndarray,
+    norb: int,
+    pairs: list[tuple[int, int]],
+) -> np.ndarray:
+    out = np.zeros((norb, norb), dtype=np.float64)
+    if pairs:
+        rows, cols = zip(*pairs)
+        vals = np.asarray(values, dtype=np.float64)
+        out[rows, cols] = vals
+        out[cols, rows] = vals
+    return out
+
+
+def _ordered_matrix_from_values(
+    values: np.ndarray,
+    norb: int,
+    pairs: list[tuple[int, int]],
+) -> np.ndarray:
+    out = np.zeros((norb, norb), dtype=np.float64)
+    values = np.asarray(values, dtype=np.float64)
+    if values.shape != (len(pairs),):
+        raise ValueError(f"Expected {(len(pairs),)}, got {values.shape}.")
+    for value, (p, q) in zip(values, pairs):
+        out[p, q] = value
+    np.fill_diagonal(out, 0.0)
+    return out
+
+
+def _values_from_ordered_matrix(
+    mat: np.ndarray,
+    pairs: list[tuple[int, int]],
+) -> np.ndarray:
+    mat = np.asarray(mat, dtype=np.float64)
+    return np.asarray([mat[p, q] for p, q in pairs], dtype=np.float64)
+
+
+def _restricted_irreducible_pair_matrix(
+    double_params: np.ndarray,
+    pair_params: np.ndarray,
+) -> np.ndarray:
+    double = np.asarray(double_params, dtype=np.float64)
+    pair = np.asarray(pair_params, dtype=np.float64)
+    shift = 0.5 * (double[:, None] + double[None, :])
+    out = np.array(pair, copy=True, dtype=np.float64)
+    mask = ~np.eye(pair.shape[0], dtype=bool)
+    out[mask] -= shift[mask]
+    np.fill_diagonal(out, 0.0)
+    return out
+
+
+def _restricted_left_phase_vector(double_params: np.ndarray, nocc: int) -> np.ndarray:
+    return 0.5 * (2 * int(nocc) - 1) * np.asarray(double_params, dtype=np.float64)
 
 
 @dataclass(frozen=True)
@@ -67,7 +236,7 @@ class RestrictedPairChart:
     def blocks(self, prefix: str = "") -> tuple[ParameterBlock, ...]:
         return (
             ParameterBlock(
-                _prefixed(prefix, "pair"),
+                "pair" if prefix == "" else f"{prefix}.pair",
                 0,
                 self.n_params,
                 shape=(self.n_params,),
@@ -180,7 +349,7 @@ class RestrictedCubicChart:
         stop = start + self.n_pair_params
         blocks.append(
             ParameterBlock(
-                _prefixed(prefix, "pair"),
+                "pair" if prefix == "" else f"{prefix}.pair",
                 start,
                 stop,
                 shape=(self.n_pair_params,),
@@ -192,7 +361,7 @@ class RestrictedCubicChart:
             stop = start + self.n_tau_params
             blocks.append(
                 ParameterBlock(
-                    _prefixed(prefix, "cubic"),
+                    "cubic" if prefix == "" else f"{prefix}.cubic",
                     start,
                     stop,
                     shape=(self.n_tau_params,),
@@ -204,7 +373,7 @@ class RestrictedCubicChart:
         if stop > start:
             blocks.append(
                 ParameterBlock(
-                    _prefixed(prefix, "tau"),
+                    "tau" if prefix == "" else f"{prefix}.tau",
                     start,
                     stop,
                     shape=(self.n_tau_params,),
@@ -216,7 +385,7 @@ class RestrictedCubicChart:
         if stop > start:
             blocks.append(
                 ParameterBlock(
-                    _prefixed(prefix, "omega"),
+                    "omega" if prefix == "" else f"{prefix}.omega",
                     start,
                     stop,
                     shape=(self.n_omega_params,),
@@ -509,7 +678,7 @@ class RestrictedQuarticChart:
         stop = start + self.n_pair_params
         blocks.append(
             ParameterBlock(
-                _prefixed(prefix, "pair"),
+                "pair" if prefix == "" else f"{prefix}.pair",
                 start,
                 stop,
                 shape=(self.n_pair_params,),
@@ -521,7 +690,7 @@ class RestrictedQuarticChart:
             stop = start + self.n_tau_params
             blocks.append(
                 ParameterBlock(
-                    _prefixed(prefix, "cubic"),
+                    "cubic" if prefix == "" else f"{prefix}.cubic",
                     start,
                     stop,
                     shape=(self.n_tau_params,),
@@ -534,7 +703,7 @@ class RestrictedQuarticChart:
             if stop > start:
                 blocks.append(
                     ParameterBlock(
-                        _prefixed(prefix, "tau"),
+                        "tau" if prefix == "" else f"{prefix}.tau",
                         start,
                         stop,
                         shape=(self.n_tau_params,),
@@ -546,7 +715,7 @@ class RestrictedQuarticChart:
             if stop > start:
                 blocks.append(
                     ParameterBlock(
-                        _prefixed(prefix, "omega"),
+                        "omega" if prefix == "" else f"{prefix}.omega",
                         start,
                         stop,
                         shape=(self.n_omega_params,),
@@ -559,7 +728,7 @@ class RestrictedQuarticChart:
             stop = start + self.n_rho_params
             blocks.append(
                 ParameterBlock(
-                    _prefixed(prefix, "quartic"),
+                    "quartic" if prefix == "" else f"{prefix}.quartic",
                     start,
                     stop,
                     shape=(self.n_rho_params,),
@@ -572,7 +741,7 @@ class RestrictedQuarticChart:
         if stop > start:
             blocks.append(
                 ParameterBlock(
-                    _prefixed(prefix, "eta"),
+                    "eta" if prefix == "" else f"{prefix}.eta",
                     start,
                     stop,
                     shape=(self.n_eta_params,),
@@ -584,7 +753,7 @@ class RestrictedQuarticChart:
         if stop > start:
             blocks.append(
                 ParameterBlock(
-                    _prefixed(prefix, "rho"),
+                    "rho" if prefix == "" else f"{prefix}.rho",
                     start,
                     stop,
                     shape=(self.n_rho_params,),
@@ -596,7 +765,7 @@ class RestrictedQuarticChart:
         if stop > start:
             blocks.append(
                 ParameterBlock(
-                    _prefixed(prefix, "sigma"),
+                    "sigma" if prefix == "" else f"{prefix}.sigma",
                     start,
                     stop,
                     shape=(self.n_sigma_params,),
@@ -871,4 +1040,3 @@ class RestrictedQuarticChart:
         if idx != self.n_params:
             raise ValueError("diagonal parameter block has inconsistent length")
         return out, phase_vec
-

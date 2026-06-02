@@ -1,17 +1,38 @@
 from __future__ import annotations
 
+import itertools
 from functools import cache
 
 import numpy as np
 
 from xquces.basis import occ_rows
-from xquces.gcr.utils import (
-    _default_eta_indices,
-    _default_rho_indices,
-    _default_sigma_indices,
-    _default_tau_indices,
-    _default_triple_indices,
-)
+
+
+def _default_tau_indices(norb: int) -> list[tuple[int, int]]:
+    return [(p, q) for p in range(norb) for q in range(norb) if p != q]
+
+
+def _default_triple_indices(norb: int) -> list[tuple[int, int, int]]:
+    return list(itertools.combinations(range(norb), 3))
+
+
+def _default_eta_indices(norb: int) -> list[tuple[int, int]]:
+    return list(itertools.combinations(range(norb), 2))
+
+
+def _default_rho_indices(norb: int) -> list[tuple[int, int, int]]:
+    return [
+        (p, q, r)
+        for p in range(norb)
+        for q in range(norb)
+        if q != p
+        for r in range(q + 1, norb)
+        if r != p
+    ]
+
+
+def _default_sigma_indices(norb: int) -> list[tuple[int, int, int, int]]:
+    return list(itertools.combinations(range(norb), 4))
 
 
 @cache
@@ -140,4 +161,3 @@ def _diag_feature_matrix(
     if order == 4:
         return _igcr4_feature_matrix(parameterization, nelec)
     raise TypeError(type(parameterization).__name__)
-

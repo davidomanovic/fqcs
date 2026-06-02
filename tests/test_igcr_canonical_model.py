@@ -18,12 +18,12 @@ from xquces.gcr import (
     IGCR4SpinRestrictedParameterization,
     IGCR4SpinRestrictedSpec,
 )
-from xquces.gcr.canonical_lift import (
+from xquces.gcr.canonical import (
+    as_layered_igcr_ansatz,
     lift_igcr2_to_igcr3,
     lift_igcr2_to_igcr4,
     lift_igcr3_to_igcr4,
 )
-from xquces.gcr.canonical_layering import as_layered_igcr_ansatz
 from xquces.gcr.igcr import (
     igcr3_from_igcr2_ansatz,
     igcr4_from_igcr2_ansatz,

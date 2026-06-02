@@ -9,13 +9,10 @@ from xquces.ansatz import (
 )
 from xquces.gcr import IGCRSpinRestrictedParameterization
 from xquces.gcr.references import CompositeReferenceAnsatzParameterization
-from xquces.gcr.restricted_jacobian import (
+from xquces.jacobian.restricted_igcr import (
     make_restricted_gcr_jacobian,
     make_restricted_gcr_subspace_jacobian,
     make_restricted_gcr_vjp,
-)
-from xquces.jacobian.restricted_igcr import (
-    make_restricted_gcr_jacobian as make_restricted_gcr_jacobian_backend,
 )
 from xquces.states import hartree_fock_state
 
@@ -122,5 +119,5 @@ def test_unsupported_sequence_jacobian_has_clear_error():
         make_state_jacobian(sequence, np.ones(1, dtype=np.complex128), (0, 0))
 
 
-def test_legacy_restricted_jacobian_facade_points_to_backend():
-    assert make_restricted_gcr_jacobian is make_restricted_gcr_jacobian_backend
+def test_restricted_jacobian_backend_imports_directly():
+    assert callable(make_restricted_gcr_jacobian)

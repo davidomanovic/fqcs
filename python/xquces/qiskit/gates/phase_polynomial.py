@@ -13,18 +13,31 @@ from qiskit.circuit import (
 )
 from qiskit.circuit.library import CXGate, RZGate
 
-from xquces.gcr.utils import (
-    _default_eta_indices,
-    _default_rho_indices,
-    _default_sigma_indices,
-)
-
 
 PauliZCoefficients = dict[tuple[int, ...], float]
 
 _PHASE_POLYNOMIAL_SYNTHESIS_MODES = frozenset(
     {"parity_gadgets", "balanced_parity_gadgets", "parity_network"}
 )
+
+
+def _default_eta_indices(norb: int) -> list[tuple[int, int]]:
+    return list(itertools.combinations(range(norb), 2))
+
+
+def _default_rho_indices(norb: int) -> list[tuple[int, int, int]]:
+    return [
+        (p, q, r)
+        for p in range(norb)
+        for q in range(norb)
+        if q != p
+        for r in range(q + 1, norb)
+        if r != p
+    ]
+
+
+def _default_sigma_indices(norb: int) -> list[tuple[int, int, int, int]]:
+    return list(itertools.combinations(range(norb), 4))
 
 
 def _validate_threshold(threshold: float) -> float:

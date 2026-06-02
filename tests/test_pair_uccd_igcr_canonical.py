@@ -3,16 +3,7 @@ from __future__ import annotations
 import numpy as np
 
 from xquces.gcr.igcr import IGCRSpinRestrictedParameterization
-from xquces.gcr.pair_uccd_reference import (
-    GCR2PairUCCDParameterization,
-    GCR2ProductPairUCCDParameterization,
-    GCR3PairUCCDParameterization,
-    GCR3ProductPairUCCDParameterization,
-    GCR4PairUCCDParameterization,
-    GCR4ProductPairUCCDParameterization,
-    GCRPairUCCDParameterization,
-    PairUCCDIGCRParameterization,
-)
+from xquces.gcr.pair_uccd_igcr import PairUCCDIGCRParameterization
 from xquces.gcr.restricted_model import IGCR3Ansatz, IGCR4Ansatz
 from xquces.ucj.model import SpinRestrictedSpec, UCJAnsatz, UCJLayer
 
@@ -56,20 +47,19 @@ def _block_metadata(parameterization):
     )
 
 
-def test_pair_uccd_igcr_wrappers_use_canonical_order_parameterization():
+def test_pair_uccd_igcr_canonical_order_parameterization():
     cases = (
-        (GCR2PairUCCDParameterization, 2, "exponential", {}),
-        (GCR3PairUCCDParameterization, 3, "exponential", {}),
-        (GCR4PairUCCDParameterization, 4, "exponential", {}),
-        (GCR2ProductPairUCCDParameterization, 2, "product", {"layers": 2}),
-        (GCR3ProductPairUCCDParameterization, 3, "product", {}),
-        (GCR4ProductPairUCCDParameterization, 4, "product", {}),
+        (2, "exponential", {}),
+        (3, "exponential", {}),
+        (4, "exponential", {}),
+        (2, "product", {"layers": 2}),
+        (3, "product", {}),
+        (4, "product", {}),
     )
 
     rng = np.random.default_rng(240)
-    for cls, order, reference_kind, kwargs in cases:
-        wrapper = cls(norb=4, nocc=2, **kwargs)
-        canonical = PairUCCDIGCRParameterization(
+    for order, reference_kind, kwargs in cases:
+        parameterization = PairUCCDIGCRParameterization(
             norb=4,
             nocc=2,
             order=order,
@@ -77,38 +67,16 @@ def test_pair_uccd_igcr_wrappers_use_canonical_order_parameterization():
             **kwargs,
         )
 
-        assert isinstance(wrapper, PairUCCDIGCRParameterization)
-        assert isinstance(wrapper.ansatz_parameterization, IGCRSpinRestrictedParameterization)
-        assert wrapper.ansatz_parameterization.order == order
-        assert wrapper.n_params == canonical.n_params
-        assert _block_metadata(wrapper) == _block_metadata(canonical)
+        assert isinstance(parameterization.ansatz_parameterization, IGCRSpinRestrictedParameterization)
+        assert parameterization.ansatz_parameterization.order == order
+        assert parameterization.reference_kind == reference_kind
+        assert parameterization.n_params == parameterization._composite.n_params
+        assert _block_metadata(parameterization)[-1][2] == parameterization.n_params
 
-        params = rng.normal(scale=1.0e-3, size=wrapper.n_params)
-        np.testing.assert_allclose(
-            wrapper.state_from_parameters(params),
-            canonical.state_from_parameters(params),
-            atol=1.0e-14,
-            rtol=0.0,
-        )
-
-        _, ansatz_params = wrapper.split_parameters(params)
-        legacy_ansatz = wrapper.ansatz_from_parameters(ansatz_params)
+        params = rng.normal(scale=1.0e-3, size=parameterization.n_params)
+        _, ansatz_params = parameterization.split_parameters(params)
+        legacy_ansatz = parameterization.ansatz_from_parameters(ansatz_params)
         assert not legacy_ansatz.__class__.__name__.startswith("IGCRAnsatz")
-
-
-def test_gcr_pair_uccd_facade_still_selects_compatibility_wrapper():
-    facade = GCRPairUCCDParameterization(
-        norb=4,
-        nocc=2,
-        order=3,
-        reference_kind="product",
-    )
-
-    implementation = facade.implementation
-
-    assert isinstance(implementation, GCR3ProductPairUCCDParameterization)
-    assert isinstance(implementation, PairUCCDIGCRParameterization)
-    assert implementation.ansatz_parameterization.order == 3
 
 
 def test_pair_uccd_igcr_t_amplitude_seed_uses_canonical_lifts(monkeypatch):
@@ -178,10 +146,10 @@ def test_pair_uccd_igcr_nested_seed_uses_canonical_lifts(monkeypatch):
     monkeypatch.setattr(IGCR4Ansatz, "from_igcr3_ansatz", classmethod(blocked))
 
     t2 = _small_t2(seed=26)
-    base = GCR2PairUCCDParameterization(norb=5, nocc=2)
+    base = PairUCCDIGCRParameterization(norb=5, nocc=2, order=2)
     x2 = base.parameters_from_t_amplitudes(t2)
 
-    target3 = GCR3PairUCCDParameterization(norb=5, nocc=2)
+    target3 = PairUCCDIGCRParameterization(norb=5, nocc=2, order=3)
     x3 = target3.nested_lift_parameters_from(
         x2,
         base,
@@ -189,7 +157,7 @@ def test_pair_uccd_igcr_nested_seed_uses_canonical_lifts(monkeypatch):
     )
     assert x3.shape == (target3.n_params,)
 
-    target4 = GCR4PairUCCDParameterization(norb=5, nocc=2)
+    target4 = PairUCCDIGCRParameterization(norb=5, nocc=2, order=4)
     x4 = target4.nested_lift_parameters_from(
         x3,
         target3,

@@ -1,53 +1,54 @@
+from xquces.ansatz.blocks import parameter_blocks, parameter_view, random_parameters
+from xquces.ansatz.parameters import ParameterBlock, ParameterView
 from xquces.gcr.igcr import (
     GCRParameterBlock,
-    ParameterBlock,
-    ParameterView,
-    IGCR2Ansatz,
-    IGCR2LayeredAnsatz,
     IGCR2SpinBalancedParameterization,
     IGCR2SpinBalancedSpec,
     IGCR2SpinRestrictedParameterization,
+    IGCR3SpinRestrictedParameterization,
+    IGCR4SpinRestrictedParameterization,
+    IGCRVariationalCircuit,
+    embed_ansatz_parameters,
+    igcr3_from_igcr2_ansatz,
+    parameters_from_t2,
+    reduce_spin_balanced,
+)
+from xquces.gcr.restricted_model import (
+    IGCR2Ansatz,
+    IGCR2LayeredAnsatz,
     IGCR2SpinRestrictedSpec,
     IGCR3Ansatz,
     IGCR3LayeredAnsatz,
-    IGCR3CubicReduction,
-    IGCR3SpinRestrictedParameterization,
     IGCR3SpinRestrictedSpec,
     IGCR4Ansatz,
     IGCR4LayeredAnsatz,
-    IGCR4QuarticReduction,
-    IGCR4SpinRestrictedParameterization,
     IGCR4SpinRestrictedSpec,
-    IGCRVariationalCircuit,
     apply_igcr3_spin_restricted_diagonal,
-    exact_reference_ov_params_from_unitary,
-    exact_reference_ov_unitary,
-    igcr3_from_igcr2_ansatz,
-    orbital_relabeling_from_overlap,
-    parameter_blocks,
-    parameter_view,
-    random_parameters,
-    reduce_spin_balanced,
     reduce_spin_restricted,
-    relabel_igcr2_ansatz_orbitals,
-    relabel_igcr3_ansatz_orbitals,
-    relabel_igcr4_ansatz_orbitals,
-    transport_igcr2_ansatz_orbitals,
-    transport_igcr3_ansatz_orbitals,
-    transport_igcr4_ansatz_orbitals,
     spin_restricted_quartic_seed_from_pair_params,
     spin_restricted_triples_seed_from_pair_params,
 )
-from xquces.gcr.canonical import IGCRAnsatz, IGCRDiagonalCoefficients
-from xquces.gcr.canonical_lift import (
+from xquces.gcr.canonical import (
+    IGCRAnsatz,
+    IGCRDiagonalCoefficients,
     lift_igcr2_to_igcr3,
     lift_igcr2_to_igcr4,
     lift_igcr3_to_igcr4,
 )
-from xquces.gcr.canonical_transform import (
+from xquces.gcr.utils import (
+    exact_reference_ov_params_from_unitary,
+    exact_reference_ov_unitary,
+    orbital_relabeling_from_overlap,
     relabel_igcr_ansatz_orbitals,
+    relabel_igcr2_ansatz_orbitals,
+    relabel_igcr3_ansatz_orbitals,
+    relabel_igcr4_ansatz_orbitals,
     transport_igcr_ansatz_orbitals,
+    transport_igcr2_ansatz_orbitals,
+    transport_igcr3_ansatz_orbitals,
+    transport_igcr4_ansatz_orbitals,
 )
+from xquces.charts.reductions import IGCR3CubicReduction, IGCR4QuarticReduction
 from xquces.gates import (
     apply_gcr_spin_balanced,
     apply_gcr_spin_restricted,
@@ -90,9 +91,6 @@ from xquces.hamiltonians import (
     MolecularHamiltonianLinearOperator,
 )
 from xquces.gcr import (
-    GCR2ProductPairUCCDParameterization,
-    GCR3ProductPairUCCDParameterization,
-    GCR4ProductPairUCCDParameterization,
     GCRAnsatz,
     IGCRSpinRestrictedParameterization,
     PairUCCDIGCRParameterization,
@@ -129,7 +127,6 @@ from xquces.ucj.parameterization import (
 )
 from xquces.optimize.linear_method import minimize_linear_method
 from xquces.presets import IGCR, PairUCCD_GCR
-from xquces.seeds.dispatch import embed_ansatz_parameters, parameters_from_t2
 from xquces.utils import apply_spin_square, spin_square, build_hydrogen_ring
 
 __all__ = [
@@ -160,9 +157,6 @@ __all__ = [
     "lift_igcr2_to_igcr3",
     "lift_igcr2_to_igcr4",
     "lift_igcr3_to_igcr4",
-    "GCR2ProductPairUCCDParameterization",
-    "GCR3ProductPairUCCDParameterization",
-    "GCR4ProductPairUCCDParameterization",
     "PairUCCDIGCRParameterization",
     "SlaterPairUCCDStateParameterization",
     "gcr_from_ucj_ansatz",

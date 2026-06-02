@@ -1,6 +1,5 @@
 import numpy as np
 
-import xquces.gcr.igcr as legacy_igcr
 from xquces.gcr import (
     IGCRAnsatz,
     IGCR2Ansatz,
@@ -12,9 +11,12 @@ from xquces.gcr import (
     IGCR4Ansatz,
     IGCR4SpinRestrictedSpec,
 )
-from xquces.gcr.canonical_transform import (
+from xquces.gcr.utils import (
     relabel_igcr_ansatz_orbitals,
+    relabel_igcr2_ansatz_orbitals,
+    relabel_igcr3_ansatz_orbitals,
     transport_igcr_ansatz_orbitals,
+    transport_igcr4_ansatz_orbitals,
 )
 
 
@@ -41,7 +43,7 @@ def _assert_same_generic_ansatz(left: IGCRAnsatz, right: IGCRAnsatz):
         np.testing.assert_allclose(u_left, u_right)
 
 
-def test_legacy_igcr2_relabel_delegates_to_canonical_transform():
+def test_legacy_igcr2_relabel_delegates_to_generic_relabel():
     rng = np.random.default_rng(10)
     norb = 4
     pair = rng.normal(scale=0.1, size=(norb, norb))
@@ -56,13 +58,13 @@ def test_legacy_igcr2_relabel_delegates_to_canonical_transform():
     old_for_new = np.array([2, 0, 3, 1])
     phases = np.array([1.0, -1.0, 1.0, -1.0])
 
-    legacy = legacy_igcr.relabel_igcr2_ansatz_orbitals(ansatz, old_for_new, phases)
+    legacy = relabel_igcr2_ansatz_orbitals(ansatz, old_for_new, phases)
     canonical = relabel_igcr_ansatz_orbitals(ansatz, old_for_new, phases, order=2)
 
     _assert_same_generic_ansatz(legacy.to_generic(), canonical)
 
 
-def test_legacy_igcr3_layered_relabel_delegates_to_canonical_transform():
+def test_legacy_igcr3_layered_relabel_delegates_to_generic_relabel():
     rng = np.random.default_rng(20)
     norb = 4
     diagonals = tuple(
@@ -81,13 +83,13 @@ def test_legacy_igcr3_layered_relabel_delegates_to_canonical_transform():
     )
     old_for_new = np.array([1, 3, 0, 2])
 
-    legacy = legacy_igcr.relabel_igcr3_ansatz_orbitals(ansatz, old_for_new)
+    legacy = relabel_igcr3_ansatz_orbitals(ansatz, old_for_new)
     canonical = relabel_igcr_ansatz_orbitals(ansatz, old_for_new, order=3)
 
     _assert_same_generic_ansatz(legacy.to_generic(), canonical)
 
 
-def test_legacy_igcr4_transport_delegates_to_canonical_transform():
+def test_legacy_igcr4_transport_delegates_to_generic_transport():
     rng = np.random.default_rng(30)
     norb = 4
     ansatz = IGCR4Ansatz(
@@ -106,7 +108,7 @@ def test_legacy_igcr4_transport_delegates_to_canonical_transform():
     )
     basis_change = _random_unitary(rng, norb)
 
-    legacy = legacy_igcr.transport_igcr4_ansatz_orbitals(ansatz, basis_change)
+    legacy = transport_igcr4_ansatz_orbitals(ansatz, basis_change)
     canonical = transport_igcr_ansatz_orbitals(ansatz, basis_change, order=4)
 
     _assert_same_generic_ansatz(legacy.to_generic(), canonical)

@@ -1,68 +1,67 @@
-from xquces.gcr.igcr import (
+from xquces.ansatz.blocks import parameter_blocks, parameter_view, random_parameters
+from xquces.ansatz.parameters import ParameterBlock, ParameterView
+from xquces.gcr.charts import (
     GCR2FullUnitaryChart,
     GCR2TraceFixedFullUnitaryChart,
-    GCRParameterBlock,
-    ParameterBlock,
-    ParameterView,
-    IGCR2Ansatz,
-    IGCR2LayeredAnsatz,
     IGCR2BlockDiagLeftUnitaryChart,
     IGCR2LeftUnitaryChart,
     IGCR2RealReferenceOVUnitaryChart,
     IGCR2ReferenceOVUnitaryChart,
+)
+from xquces.gcr.igcr import (
+    GCRParameterBlock,
     IGCR2SpinBalancedParameterization,
     IGCR2SpinBalancedSpec,
     IGCR2SpinRestrictedParameterization,
+    IGCR3SpinRestrictedParameterization,
+    IGCR4SpinRestrictedParameterization,
+    IGCRSpinRestrictedParameterization,
+    IGCRVariationalCircuit,
+    embed_ansatz_parameters,
+    igcr3_from_igcr2_ansatz,
+    parameters_from_t2,
+)
+from xquces.gcr.restricted_model import (
+    IGCR2Ansatz,
+    IGCR2LayeredAnsatz,
     IGCR2SpinRestrictedSpec,
     IGCR3Ansatz,
     IGCR3LayeredAnsatz,
-    IGCR3CubicReduction,
-    IGCR3SpinRestrictedParameterization,
     IGCR3SpinRestrictedSpec,
     IGCR4Ansatz,
     IGCR4LayeredAnsatz,
-    IGCR4QuarticReduction,
-    IGCR4SpinRestrictedParameterization,
     IGCR4SpinRestrictedSpec,
-    IGCRSpinRestrictedParameterization,
-    IGCRVariationalCircuit,
-    igcr3_from_igcr2_ansatz,
-    parameter_blocks,
-    parameter_view,
-    random_parameters,
+    apply_igcr3_spin_restricted_diagonal,
+    apply_igcr4_spin_restricted_diagonal,
+    reduce_spin_restricted,
+    spin_restricted_quartic_seed_from_pair_params,
+    spin_restricted_triples_seed_from_pair_params,
 )
-from xquces.seeds.dispatch import embed_ansatz_parameters, parameters_from_t2
+from xquces.charts.reductions import IGCR3CubicReduction, IGCR4QuarticReduction
 from xquces.seeds.residual import CCSDResidualSeedInfo
 from xquces.seeds.ucj import (
     layered_igcr2_from_ccsd_t_amplitudes,
     layered_igcr2_from_ucj_t_amplitudes,
 )
-from xquces.gcr.canonical import IGCRAnsatz, IGCRDiagonalCoefficients
-from xquces.gcr.canonical_lift import (
+from xquces.gcr.canonical import (
+    IGCRAnsatz,
+    IGCRDiagonalCoefficients,
     lift_igcr2_to_igcr3,
     lift_igcr2_to_igcr4,
     lift_igcr3_to_igcr4,
 )
-from xquces.gcr.canonical_transform import (
+from xquces.gcr.utils import (
     relabel_igcr_ansatz_orbitals,
-    transport_igcr_ansatz_orbitals,
-)
-
-from xquces.gcr.igcr import (
     relabel_igcr2_ansatz_orbitals,
     relabel_igcr3_ansatz_orbitals,
     relabel_igcr4_ansatz_orbitals,
+    transport_igcr_ansatz_orbitals,
     transport_igcr2_ansatz_orbitals,
     transport_igcr3_ansatz_orbitals,
     transport_igcr4_ansatz_orbitals,
 )
 from xquces.gcr.model import GCRAnsatz, gcr_from_ucj_ansatz
-from xquces.gcr.pair_uccd_reference import (
-    GCR2ProductPairUCCDParameterization,
-    GCR3ProductPairUCCDParameterization,
-    GCR4ProductPairUCCDParameterization,
-    PairUCCDIGCRParameterization,
-)
+from xquces.gcr.pair_uccd_igcr import PairUCCDIGCRParameterization
 from xquces.gcr.product_pair_uccd import (
     SlaterPairUCCDStateParameterization,
     slater_pair_orbital_rotation_from_parameters,
@@ -71,7 +70,7 @@ from xquces.gcr.product_pair_uccd import (
     slater_pair_uccd_state_jacobian,
     slater_pair_uccd_state_vjp,
 )
-from xquces.gcr.restricted_jacobian import (
+from xquces.jacobian.restricted_igcr import (
     make_restricted_gcr_jacobian,
     make_restricted_gcr_subspace_jacobian,
     make_restricted_gcr_vjp,
@@ -98,9 +97,6 @@ __all__ = [
     "lift_igcr2_to_igcr3",
     "lift_igcr2_to_igcr4",
     "lift_igcr3_to_igcr4",
-    "GCR2ProductPairUCCDParameterization",
-    "GCR3ProductPairUCCDParameterization",
-    "GCR4ProductPairUCCDParameterization",
     "PairUCCDIGCRParameterization",
     "SlaterPairUCCDStateParameterization",
     "IGCR2Ansatz",
@@ -128,6 +124,8 @@ __all__ = [
     "CompositeReferenceAnsatzParameterization",
     "FixedReferenceAnsatzParameterization",
     "apply_ansatz_parameterization",
+    "apply_igcr3_spin_restricted_diagonal",
+    "apply_igcr4_spin_restricted_diagonal",
     "embed_ansatz_parameters",
     "gcr_from_ucj_ansatz",
     "igcr3_from_igcr2_ansatz",
@@ -143,6 +141,7 @@ __all__ = [
     "parameter_view",
     "parameters_from_t2",
     "random_parameters",
+    "reduce_spin_restricted",
     "relabel_igcr_ansatz_orbitals",
     "relabel_igcr2_ansatz_orbitals",
     "relabel_igcr3_ansatz_orbitals",
@@ -151,6 +150,8 @@ __all__ = [
     "transport_igcr2_ansatz_orbitals",
     "transport_igcr3_ansatz_orbitals",
     "transport_igcr4_ansatz_orbitals",
+    "spin_restricted_quartic_seed_from_pair_params",
+    "spin_restricted_triples_seed_from_pair_params",
     "slater_pair_orbital_rotation_from_parameters",
     "slater_pair_uccd_pair_register_state",
     "slater_pair_uccd_state",

@@ -8,7 +8,7 @@ from xquces.gcr.igcr import (
     IGCR4SpinRestrictedParameterization,
     IGCRSpinRestrictedParameterization,
 )
-from xquces.gcr.restricted_jacobian import make_restricted_gcr_vjp
+from xquces.jacobian.restricted_igcr import make_restricted_gcr_vjp
 
 
 def test_high_order_layered_embedding_preserves_state():

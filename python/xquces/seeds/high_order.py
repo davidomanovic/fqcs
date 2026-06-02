@@ -1,11 +1,110 @@
 from __future__ import annotations
 
+import itertools
+
 import numpy as np
 
 from xquces.seeds.residual import (
     _default_high_order_residual_blocks,
     _parameters_from_ccsd_residual_seed,
 )
+
+
+def _default_triple_indices(norb: int) -> list[tuple[int, int, int]]:
+    return list(itertools.combinations(range(norb), 3))
+
+
+def _default_eta_indices(norb: int) -> list[tuple[int, int]]:
+    return list(itertools.combinations(range(norb), 2))
+
+
+def _default_rho_indices(norb: int) -> list[tuple[int, int, int]]:
+    return [
+        (p, q, r)
+        for p in range(norb)
+        for q in range(norb)
+        if q != p
+        for r in range(q + 1, norb)
+        if r != p
+    ]
+
+
+def _default_sigma_indices(norb: int) -> list[tuple[int, int, int, int]]:
+    return list(itertools.combinations(range(norb), 4))
+
+
+def _triples_seed_from_pair_matrix(
+    pair_params: np.ndarray,
+    nocc: int,
+    *,
+    tau_scale: float = 0.0,
+    omega_scale: float = 0.0,
+) -> tuple[np.ndarray, np.ndarray]:
+    pair = np.asarray(pair_params, dtype=np.float64)
+    if pair.ndim != 2 or pair.shape[0] != pair.shape[1]:
+        raise ValueError("pair_params must be a square matrix")
+    norb = pair.shape[0]
+    denom = max(2 * int(nocc) - 2, 1)
+
+    tau = np.zeros((norb, norb), dtype=np.float64)
+    if tau_scale != 0.0:
+        for p in range(norb):
+            for q in range(norb):
+                if p != q:
+                    tau[p, q] = float(tau_scale) * pair[p, q] / denom
+
+    omega = np.zeros(len(_default_triple_indices(norb)), dtype=np.float64)
+    if omega_scale != 0.0:
+        for k, (p, q, r) in enumerate(_default_triple_indices(norb)):
+            omega[k] = (
+                float(omega_scale)
+                * (pair[p, q] + pair[p, r] + pair[q, r])
+                / (3.0 * denom)
+            )
+    return tau, omega
+
+
+def _quartic_seed_from_pair_matrix(
+    pair_params: np.ndarray,
+    nocc: int,
+    *,
+    eta_scale: float = 0.0,
+    rho_scale: float = 0.0,
+    sigma_scale: float = 0.0,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    pair = np.asarray(pair_params, dtype=np.float64)
+    if pair.ndim != 2 or pair.shape[0] != pair.shape[1]:
+        raise ValueError("pair_params must be a square matrix")
+    norb = pair.shape[0]
+    denom = max(2 * int(nocc) - 3, 1)
+
+    eta = np.zeros(len(_default_eta_indices(norb)), dtype=np.float64)
+    if eta_scale != 0.0:
+        for k, (p, q) in enumerate(_default_eta_indices(norb)):
+            eta[k] = float(eta_scale) * 0.5 * pair[p, q] / denom
+
+    rho = np.zeros(len(_default_rho_indices(norb)), dtype=np.float64)
+    if rho_scale != 0.0:
+        for k, (p, q, r) in enumerate(_default_rho_indices(norb)):
+            rho[k] = (
+                float(rho_scale)
+                * (pair[p, q] + pair[p, r] + pair[q, r])
+                / (3.0 * denom)
+            )
+
+    sigma = np.zeros(len(_default_sigma_indices(norb)), dtype=np.float64)
+    if sigma_scale != 0.0:
+        for k, (p, q, r, s) in enumerate(_default_sigma_indices(norb)):
+            avg = (
+                pair[p, q]
+                + pair[p, r]
+                + pair[p, s]
+                + pair[q, r]
+                + pair[q, s]
+                + pair[r, s]
+            ) / 6.0
+            sigma[k] = float(sigma_scale) * avg / denom
+    return eta, rho, sigma
 
 
 def igcr3_parameters_from_t_amplitudes(

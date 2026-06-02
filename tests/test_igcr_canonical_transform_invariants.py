@@ -11,7 +11,7 @@ from xquces.gcr import (
     IGCR4Ansatz,
     IGCR4SpinRestrictedSpec,
 )
-from xquces.gcr.canonical_transform import (
+from xquces.gcr.utils import (
     relabel_igcr_ansatz_orbitals,
     transport_igcr_ansatz_orbitals,
 )
@@ -116,7 +116,7 @@ def test_canonical_transport_preserves_diagonals_and_layer_count_order2():
     np.testing.assert_allclose(out.rotations[1], ansatz.rotations[1])
 
 
-def test_generic_canonical_transform_rejects_spin_balanced_legacy_input():
+def test_generic_relabel_transport_rejects_spin_balanced_legacy_input():
     param = IGCR2SpinBalancedParameterization(norb=4, nocc=2)
     ansatz = param.ansatz_from_parameters(np.zeros(param.n_params))
 

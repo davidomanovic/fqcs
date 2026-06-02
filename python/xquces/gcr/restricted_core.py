@@ -5,8 +5,11 @@ from typing import Callable
 
 import numpy as np
 
-from xquces.gcr.canonical import IGCRAnsatz, IGCRDiagonalCoefficients
-from xquces.gcr.canonical_layering import as_layered_igcr_ansatz
+from xquces.gcr.canonical import (
+    IGCRAnsatz,
+    IGCRDiagonalCoefficients,
+    as_layered_igcr_ansatz,
+)
 from xquces.gcr.utils import (
     _diag_unitary,
     _final_unitary_from_left_and_right,
@@ -298,4 +301,3 @@ class SpinRestrictedLayeredDiagonalParameterizationCore:
         else:
             final = right_rotation
         out[idx : idx + n] = self.right_orbital_chart.parameters_from_unitary(final)
-

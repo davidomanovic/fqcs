@@ -5,8 +5,8 @@ from qiskit.providers.fake_provider import GenericBackendV2
 from qiskit.transpiler import CouplingMap, StagedPassManager
 
 import xquces.qiskit as xq_qiskit
-from xquces.qiskit.gcr2_pair_uccd_pass_manager import (
-    generate_gcr2_pair_uccd_pass_manager as legacy_pair_uccd_pm,
+from xquces.qiskit.pass_managers import (
+    generate_gcr2_pair_uccd_pass_manager,
 )
 
 
@@ -59,7 +59,7 @@ def test_generate_gcr2_pass_manager_square_defaults_all_alpha_beta_pairs():
 
 
 def test_pair_uccd_wrapper_accepts_legacy_topology_keyword():
-    result = legacy_pair_uccd_pm(
+    result = generate_gcr2_pair_uccd_pass_manager(
         backend=_backend("heavy-hex"),
         norb=4,
         nocc=2,

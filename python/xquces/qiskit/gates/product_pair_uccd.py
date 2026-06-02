@@ -9,7 +9,7 @@ from qiskit.circuit import CircuitInstruction, Gate, QuantumCircuit, QuantumRegi
 from qiskit.circuit.library import CXGate, SwapGate, UnitaryGate, XGate, XXPlusYYGate
 
 from xquces.gcr.canonical import IGCRAnsatz
-from xquces.gcr.canonical_transform import relabel_legacy_igcr_ansatz_orbitals
+from xquces.gcr.utils import relabel_legacy_igcr_ansatz_orbitals
 from xquces.gcr.restricted_model import (
     IGCR2Ansatz,
     IGCR2LayeredAnsatz,

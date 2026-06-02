@@ -22,25 +22,19 @@ from xquces.gcr.igcr import (
     IGCR4Ansatz,
     IGCR4SpinRestrictedParameterization,
     IGCRSpinRestrictedParameterization,
-    reduce_spin_restricted,
-    relabel_igcr2_ansatz_orbitals,
-    relabel_igcr3_ansatz_orbitals,
-    relabel_igcr4_ansatz_orbitals,
 )
-from xquces.gcr.canonical import IGCRAnsatz, IGCRDiagonalCoefficients
-from xquces.gcr.canonical_lift import (
+from xquces.gcr.restricted_model import reduce_spin_restricted
+from xquces.gcr.canonical import (
+    IGCRAnsatz,
+    IGCRDiagonalCoefficients,
     lift_igcr2_to_igcr3,
     lift_igcr2_to_igcr4,
     lift_igcr3_to_igcr4,
 )
 from xquces.gcr.model import gcr_from_ucj_ansatz
 from xquces.gcr.utils import (
-    _default_eta_indices,
     _default_pair_indices,
-    _default_rho_indices,
-    _default_sigma_indices,
     _default_tau_indices,
-    _default_triple_indices,
     _diag_unitary,
     _final_unitary_from_left_and_right,
     _orbital_relabeling_unitary,
@@ -49,7 +43,9 @@ from xquces.gcr.utils import (
     _restricted_left_phase_vector,
     _values_from_ordered_matrix,
     _zero_diag_antihermitian_from_parameters,
-    orbital_relabeling_from_overlap,
+    relabel_igcr2_ansatz_orbitals,
+    relabel_igcr3_ansatz_orbitals,
+    relabel_igcr4_ansatz_orbitals,
 )
 from xquces.gcr.product_pair_uccd import (
     PairUCCDStateParameterization,
@@ -1151,6 +1147,29 @@ class PairUCCDIGCRParameterization(_PairUCCDReferenceMixin):
         )
         return info if return_info else info.params
 
+    def nested_lift_parameters_from(
+        self,
+        previous_parameters: np.ndarray,
+        previous_parameterization: object,
+        *,
+        hamiltonian=None,
+        optimize_weights: bool = True,
+        maxiter: int = 40,
+        max_abs_weight: float = 2.0,
+        accept_tol: float = 1e-12,
+        return_info: bool = False,
+    ):
+        return self._nested_lift_parameters_from(
+            previous_parameters,
+            previous_parameterization,
+            hamiltonian=hamiltonian,
+            optimize_weights=optimize_weights,
+            maxiter=maxiter,
+            max_abs_weight=max_abs_weight,
+            accept_tol=accept_tol,
+            return_info=return_info,
+        )
+
     def transfer_parameters_from(
         self,
         previous_parameters: np.ndarray,
@@ -1173,70 +1192,6 @@ class PairUCCDIGCRParameterization(_PairUCCDReferenceMixin):
             phases,
             orbital_overlap,
             block_diagonal,
-        )
-
-
-@dataclass(frozen=True)
-class GCR2PairUCCDParameterization(PairUCCDIGCRParameterization):
-    order: int = field(default=2, init=False)
-    reference_kind: str = field(default="exponential", init=False)
-
-
-@dataclass(frozen=True)
-class GCR3PairUCCDParameterization(PairUCCDIGCRParameterization):
-    order: int = field(default=3, init=False)
-    reference_kind: str = field(default="exponential", init=False)
-
-    def nested_lift_parameters_from(
-        self,
-        previous_parameters: np.ndarray,
-        previous_parameterization: object,
-        *,
-        hamiltonian=None,
-        optimize_weights: bool = True,
-        maxiter: int = 40,
-        max_abs_weight: float = 2.0,
-        accept_tol: float = 1e-12,
-        return_info: bool = False,
-    ):
-        return self._nested_lift_parameters_from(
-            previous_parameters,
-            previous_parameterization,
-            hamiltonian=hamiltonian,
-            optimize_weights=optimize_weights,
-            maxiter=maxiter,
-            max_abs_weight=max_abs_weight,
-            accept_tol=accept_tol,
-            return_info=return_info,
-        )
-
-
-@dataclass(frozen=True)
-class GCR4PairUCCDParameterization(PairUCCDIGCRParameterization):
-    order: int = field(default=4, init=False)
-    reference_kind: str = field(default="exponential", init=False)
-
-    def nested_lift_parameters_from(
-        self,
-        previous_parameters: np.ndarray,
-        previous_parameterization: object,
-        *,
-        hamiltonian=None,
-        optimize_weights: bool = True,
-        maxiter: int = 40,
-        max_abs_weight: float = 2.0,
-        accept_tol: float = 1e-12,
-        return_info: bool = False,
-    ):
-        return self._nested_lift_parameters_from(
-            previous_parameters,
-            previous_parameterization,
-            hamiltonian=hamiltonian,
-            optimize_weights=optimize_weights,
-            maxiter=maxiter,
-            max_abs_weight=max_abs_weight,
-            accept_tol=accept_tol,
-            return_info=return_info,
         )
 
 
@@ -1856,24 +1811,6 @@ def _transfer_product_params(
     )
 
 
-@dataclass(frozen=True)
-class GCR2ProductPairUCCDParameterization(PairUCCDIGCRParameterization):
-    order: int = field(default=2, init=False)
-    reference_kind: str = field(default="product", init=False)
-
-
-@dataclass(frozen=True)
-class GCR3ProductPairUCCDParameterization(PairUCCDIGCRParameterization):
-    order: int = field(default=3, init=False)
-    reference_kind: str = field(default="product", init=False)
-
-
-@dataclass(frozen=True)
-class GCR4ProductPairUCCDParameterization(PairUCCDIGCRParameterization):
-    order: int = field(default=4, init=False)
-    reference_kind: str = field(default="product", init=False)
-
-
 def _normalize_pair_uccd_reference_kind(reference_kind: str) -> str:
     key = str(reference_kind).lower().replace("-", "_")
     if key in {"exponential", "monolithic", "global", "exp"}:
@@ -1883,86 +1820,3 @@ def _normalize_pair_uccd_reference_kind(reference_kind: str) -> str:
     raise ValueError(
         "reference_kind must be one of 'exponential'/'monolithic' or 'product'"
     )
-
-
-@dataclass(frozen=True)
-class GCRPairUCCDParameterization:
-    """Order/reference-kind facade for iGCR on a pair-UCCD reference.
-    """
-
-    norb: int
-    nocc: int
-    order: int = 2
-    reference_kind: str = "exponential"
-    nelec: tuple[int, int] | None = None
-    layers: int = 1
-    shared_diagonal: bool = False
-    interaction_pairs: list[tuple[int, int]] | None = None
-    tau_indices_: list[tuple[int, int]] | None = None
-    omega_indices_: list[tuple[int, int, int]] | None = None
-    eta_indices_: list[tuple[int, int]] | None = None
-    rho_indices_: list[tuple[int, int, int]] | None = None
-    sigma_indices_: list[tuple[int, int, int, int]] | None = None
-    reduce_cubic_gauge: bool = True
-    reduce_quartic_gauge: bool = True
-    base_parameterization: object | None = None
-    left_orbital_chart: object = field(default_factory=IGCR2LeftUnitaryChart)
-    middle_orbital_chart: object = field(default_factory=IGCR2LeftUnitaryChart)
-    right_orbital_chart_override: object = field(default_factory=GCR2TraceFixedFullUnitaryChart)
-    real_right_orbital_chart: bool = False
-    left_right_ov_relative_scale: float | None = None
-    tau_seed_scale: float = 0.0
-    omega_seed_scale: float = 0.0
-    eta_seed_scale: float = 0.0
-    rho_seed_scale: float = 0.0
-    sigma_seed_scale: float = 0.0
-
-    def __post_init__(self):
-        if self.order not in {2, 3, 4}:
-            raise ValueError("order must be 2, 3, or 4")
-        _normalize_pair_uccd_reference_kind(self.reference_kind)
-
-    @property
-    def implementation(self):
-        kind = _normalize_pair_uccd_reference_kind(self.reference_kind)
-        classes = {
-            ("exponential", 2): GCR2PairUCCDParameterization,
-            ("exponential", 3): GCR3PairUCCDParameterization,
-            ("exponential", 4): GCR4PairUCCDParameterization,
-            ("product", 2): GCR2ProductPairUCCDParameterization,
-            ("product", 3): GCR3ProductPairUCCDParameterization,
-            ("product", 4): GCR4ProductPairUCCDParameterization,
-        }
-        cls = classes[(kind, self.order)]
-        kwargs = {
-            "norb": self.norb,
-            "nocc": self.nocc,
-            "nelec": self.nelec,
-            "layers": self.layers,
-            "shared_diagonal": self.shared_diagonal,
-            "interaction_pairs": self.interaction_pairs,
-            "tau_indices_": self.tau_indices_,
-            "omega_indices_": self.omega_indices_,
-            "eta_indices_": self.eta_indices_,
-            "rho_indices_": self.rho_indices_,
-            "sigma_indices_": self.sigma_indices_,
-            "reduce_cubic_gauge": self.reduce_cubic_gauge,
-            "reduce_quartic_gauge": self.reduce_quartic_gauge,
-            "base_parameterization": self.base_parameterization,
-            "left_orbital_chart": self.left_orbital_chart,
-            "middle_orbital_chart": self.middle_orbital_chart,
-            "right_orbital_chart_override": self.right_orbital_chart_override,
-            "real_right_orbital_chart": self.real_right_orbital_chart,
-            "left_right_ov_relative_scale": self.left_right_ov_relative_scale,
-        }
-        if self.order >= 3:
-            kwargs["tau_seed_scale"] = self.tau_seed_scale
-            kwargs["omega_seed_scale"] = self.omega_seed_scale
-        if self.order >= 4:
-            kwargs["eta_seed_scale"] = self.eta_seed_scale
-            kwargs["rho_seed_scale"] = self.rho_seed_scale
-            kwargs["sigma_seed_scale"] = self.sigma_seed_scale
-        return cls(**kwargs)
-
-    def __getattr__(self, name: str):
-        return getattr(self.implementation, name)

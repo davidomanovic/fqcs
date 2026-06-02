@@ -17,10 +17,7 @@ from xquces.gcr.igcr import (
 )
 from xquces.gcr.charts import GCR2FullUnitaryChart
 from xquces.gcr.utils import exact_reference_ov_unitary
-from xquces.gcr.pair_uccd_reference import (
-    GCR2ProductPairUCCDParameterization,
-    GCR3ProductPairUCCDParameterization,
-)
+from xquces.gcr.pair_uccd_igcr import PairUCCDIGCRParameterization
 from xquces.ucj.init import CCSDDoubleFactorization, factorize_ccsd_t_amplitudes
 from xquces.ucj.model import SpinRestrictedSpec, UCJAnsatz, UCJLayer
 from xquces.ucj.parameterization import ov_final_unitary
@@ -731,7 +728,7 @@ class TestIGCR2ParameterizationFromTAmplitudes:
 
 
 # ---------------------------------------------------------------------------
-# GCR2ProductPairUCCDParameterization.parameters_from_t_amplitudes
+# PairUCCDIGCRParameterization product reference, order 2
 # ---------------------------------------------------------------------------
 
 class TestGCR2ProductPUCCDFromTAmplitudes:
@@ -739,7 +736,13 @@ class TestGCR2ProductPUCCDFromTAmplitudes:
         nocc, nvirt = 2, 3
         norb = nocc + nvirt
         t2 = _small_t2(nocc, nvirt)
-        param = GCR2ProductPairUCCDParameterization(norb=norb, nocc=nocc, layers=1)
+        param = PairUCCDIGCRParameterization(
+            norb=norb,
+            nocc=nocc,
+            order=2,
+            reference_kind="product",
+            layers=1,
+        )
         x = param.parameters_from_t_amplitudes(t2)
         assert x.shape == (param.n_params,)
 
@@ -747,7 +750,13 @@ class TestGCR2ProductPUCCDFromTAmplitudes:
         nocc, nvirt = 2, 3
         norb = nocc + nvirt
         t2 = _small_t2(nocc, nvirt)
-        param = GCR2ProductPairUCCDParameterization(norb=norb, nocc=nocc, layers=2)
+        param = PairUCCDIGCRParameterization(
+            norb=norb,
+            nocc=nocc,
+            order=2,
+            reference_kind="product",
+            layers=2,
+        )
         x = param.parameters_from_t_amplitudes(t2)
         assert x.shape == (param.n_params,)
 
@@ -756,7 +765,13 @@ class TestGCR2ProductPUCCDFromTAmplitudes:
         nocc, nvirt = 2, 3
         norb = nocc + nvirt
         t2 = _small_t2(nocc, nvirt, seed=42)
-        param = GCR2ProductPairUCCDParameterization(norb=norb, nocc=nocc, layers=2)
+        param = PairUCCDIGCRParameterization(
+            norb=norb,
+            nocc=nocc,
+            order=2,
+            reference_kind="product",
+            layers=2,
+        )
         x = param.parameters_from_t_amplitudes(t2)
         # Recover the ansatz and check its diagonals
         ansatz = param.ansatz_parameterization.ansatz_from_parameters(
@@ -774,7 +789,13 @@ class TestGCR2ProductPUCCDFromTAmplitudes:
         nocc, nvirt = 2, 3
         norb = nocc + nvirt
         t2 = _small_t2(nocc, nvirt)
-        param = GCR2ProductPairUCCDParameterization(norb=norb, nocc=nocc, layers=1)
+        param = PairUCCDIGCRParameterization(
+            norb=norb,
+            nocc=nocc,
+            order=2,
+            reference_kind="product",
+            layers=1,
+        )
         x = param.parameters_from_t_amplitudes(t2)
         ref_from_call = x[: param.n_reference_params]
         ref_expected = param.reference_parameters_from_t2(t2, scale=0.5)
@@ -782,7 +803,7 @@ class TestGCR2ProductPUCCDFromTAmplitudes:
 
 
 # ---------------------------------------------------------------------------
-# GCR3ProductPairUCCDParameterization.parameters_from_t_amplitudes
+# PairUCCDIGCRParameterization product reference, order 3
 # ---------------------------------------------------------------------------
 
 class TestGCR3ProductPUCCDFromTAmplitudes:
@@ -790,7 +811,12 @@ class TestGCR3ProductPUCCDFromTAmplitudes:
         nocc, nvirt = 2, 3
         norb = nocc + nvirt
         t2 = _small_t2(nocc, nvirt)
-        param = GCR3ProductPairUCCDParameterization(norb=norb, nocc=nocc)
+        param = PairUCCDIGCRParameterization(
+            norb=norb,
+            nocc=nocc,
+            order=3,
+            reference_kind="product",
+        )
         x = param.parameters_from_t_amplitudes(t2)
         assert x.shape == (param.n_params,)
 
@@ -799,6 +825,11 @@ class TestGCR3ProductPUCCDFromTAmplitudes:
         norb = nocc + nvirt
         t2 = _small_t2(nocc, nvirt)
         t1 = _small_t1(nocc, nvirt)
-        param = GCR3ProductPairUCCDParameterization(norb=norb, nocc=nocc)
+        param = PairUCCDIGCRParameterization(
+            norb=norb,
+            nocc=nocc,
+            order=3,
+            reference_kind="product",
+        )
         x = param.parameters_from_t_amplitudes(t2, t1=t1)
         assert x.shape == (param.n_params,)
