@@ -18,6 +18,7 @@ from qiskit.transpiler.passes import ApplyLayout, VF2PostLayout
 from rustworkx import NoEdgeBetweenNodes, PyGraph
 
 from xquces.qiskit.transpiler_stages import pre_init_passes
+from xquces.qiskit.utils import ignore_ibm_fractional_translation_plugin_warning
 
 Connectivity = Literal["heavy-hex", "square"]
 Topology = Connectivity
@@ -408,11 +409,12 @@ def _build_pass_manager(
     layout: GCR2Layout,
     qiskit_pm_kwargs: dict[str, Any],
 ) -> StagedPassManager:
-    pass_manager = generate_preset_pass_manager(
-        backend=backend,
-        initial_layout=list(layout.initial_layout),
-        **qiskit_pm_kwargs,
-    )
+    with ignore_ibm_fractional_translation_plugin_warning():
+        pass_manager = generate_preset_pass_manager(
+            backend=backend,
+            initial_layout=list(layout.initial_layout),
+            **qiskit_pm_kwargs,
+        )
     pass_manager.pre_init = PassManager(list(pre_init_passes()))
 
     # Supplying an initial layout disables Qiskit's default VF2PostLayout pass.

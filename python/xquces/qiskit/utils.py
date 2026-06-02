@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 import sys
 from typing import TextIO
+import warnings
 
 from qiskit import QuantumCircuit
 from qiskit.providers.fake_provider import GenericBackendV2
@@ -13,6 +15,28 @@ from qiskit.transpiler.preset_passmanagers import generate_preset_pass_manager
 
 DEFAULT_NATIVE_BASIS_GATES = ("rz", "sx", "x", "cx")
 DEFAULT_TRANSPILE_SEED = 12345
+IBM_FRACTIONAL_TRANSLATION_PLUGIN_WARNING = (
+    "Since backends now support running jobs that contain both fractional gates "
+    "and dynamic circuit, IBMFractionalTranslationPlugin is deprecated"
+)
+
+
+@contextmanager
+def ignore_ibm_fractional_translation_plugin_warning():
+    """Ignore IBM runtime plugin-discovery noise from Qiskit transpilation.
+
+    Qiskit's preset pass-manager generator discovers every installed
+    translation-stage plugin.  Current qiskit-ibm-runtime versions emit this
+    warning while loading a deprecated plugin, even when xquces does not request
+    that plugin.
+    """
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message=f"{IBM_FRACTIONAL_TRANSLATION_PLUGIN_WARNING}.*",
+            category=DeprecationWarning,
+        )
+        yield
 
 
 @dataclass(frozen=True)
@@ -66,15 +90,16 @@ def transpile_to_native(
     seed: int = DEFAULT_TRANSPILE_SEED,
 ) -> QuantumCircuit:
     """Transpile a circuit to a simple all-to-all native-gate model."""
-    pass_manager = generate_preset_pass_manager(
-        optimization_level=optimization_level,
-        backend=native_backend(
-            circuit.num_qubits,
-            basis_gates=basis_gates,
-            seed=seed,
-        ),
-        initial_layout=list(range(circuit.num_qubits)),
-    )
+    with ignore_ibm_fractional_translation_plugin_warning():
+        pass_manager = generate_preset_pass_manager(
+            optimization_level=optimization_level,
+            backend=native_backend(
+                circuit.num_qubits,
+                basis_gates=basis_gates,
+                seed=seed,
+            ),
+            initial_layout=list(range(circuit.num_qubits)),
+        )
     if pre_init is not None:
         pass_manager.pre_init = pre_init
     return pass_manager.run(circuit)
