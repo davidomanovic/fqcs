@@ -18,6 +18,7 @@ from xquces.qiskit.gates.product_pair_uccd import (
     _pair_register_orbital_rotation,
 )
 from xquces.qiskit.gates import product_pair_uccd_stateprep_jw_circuit
+from xquces.qiskit.utils import ignore_ibm_fractional_translation_plugin_warning
 from xquces.states import _doci_spatial_basis, _doci_subspace_indices
 
 
@@ -122,26 +123,27 @@ def test_pair_register_slater_reference_cost_no_worse_than_direct():
     params = np.zeros(len(_pair_uccd_ov_pairs(norb, nelec[0])))
     basis_gates = ["cx", "rz", "sx", "x"]
 
-    slater = transpile(
-        product_pair_uccd_stateprep_jw_circuit(
-            norb,
-            nelec,
-            params,
-            strategy="pair_register_slater",
-        ),
-        basis_gates=basis_gates,
-        optimization_level=3,
-    )
-    direct = transpile(
-        product_pair_uccd_stateprep_jw_circuit(
-            norb,
-            nelec,
-            params,
-            strategy="pair_register_direct",
-        ),
-        basis_gates=basis_gates,
-        optimization_level=3,
-    )
+    with ignore_ibm_fractional_translation_plugin_warning():
+        slater = transpile(
+            product_pair_uccd_stateprep_jw_circuit(
+                norb,
+                nelec,
+                params,
+                strategy="pair_register_slater",
+            ),
+            basis_gates=basis_gates,
+            optimization_level=3,
+        )
+        direct = transpile(
+            product_pair_uccd_stateprep_jw_circuit(
+                norb,
+                nelec,
+                params,
+                strategy="pair_register_direct",
+            ),
+            basis_gates=basis_gates,
+            optimization_level=3,
+        )
 
     assert slater.depth() <= direct.depth()
     assert slater.count_ops().get("cx", 0) <= direct.count_ops().get("cx", 0)
