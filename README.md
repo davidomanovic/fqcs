@@ -27,6 +27,12 @@ change as the ansatzes evolve.
 This repository builds a Python package backed by a PyO3/Rust extension, so a
 Rust toolchain is required.
 
+First, compile the Rust kernel
+```bash
+maturin develop -r
+```
+
+Then
 ```bash
 python3 -m pip install .
 ```
