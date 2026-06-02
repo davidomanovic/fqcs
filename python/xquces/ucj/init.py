@@ -12,7 +12,6 @@ from xquces.ucj.parameterization import (
     GaugeFixedUCJSpinBalancedParameterization,
     UCJSpinBalancedParameterization,
     UCJSpinRestrictedParameterization,
-    ov_params_from_unitary,
 )
 
 

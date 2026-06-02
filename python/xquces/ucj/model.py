@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from xquces.gates import apply_ucj_spin_balanced, apply_ucj_spin_restricted
-from xquces.orbitals import apply_orbital_rotation, canonicalize_unitary
+from xquces.orbitals import apply_orbital_rotation
 
 
 @dataclass(frozen=True)

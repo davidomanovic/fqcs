@@ -9,7 +9,6 @@ from xquces.gcr.utils import (
     _left_parameters_and_right_phase_from_unitary,
     _left_parameters_from_unitary,
     _left_unitary_from_parameters,
-    _parameters_from_zero_diag_antihermitian,
     _zero_diag_antihermitian_from_parameters,
     exact_reference_ov_params_from_unitary,
 )
@@ -267,4 +266,3 @@ class IGCR2RealReferenceOVUnitaryChart:
             raise ValueError("u has wrong shape")
         n = self.nocc * self.nvirt
         return exact_reference_ov_params_from_unitary(u, self.nocc)[:n]
-

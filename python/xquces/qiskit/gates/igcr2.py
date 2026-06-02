@@ -18,7 +18,6 @@ from xquces.gcr.igcr import IGCR2SpinBalancedSpec
 from xquces.gcr.restricted_model import (
     IGCR2Ansatz,
     IGCR2LayeredAnsatz,
-    IGCR2SpinRestrictedSpec,
 )
 from xquces.gcr.utils import (
     _balanced_irreducible_pair_matrices,
