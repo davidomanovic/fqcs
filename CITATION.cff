@@ -1,0 +1,17 @@
+cff-version: 1.2.0
+message: "If you use xquces, evaluate it, compare against it, discuss it, or rely on results produced with it, please cite it as below. Use of the software is governed by the LICENSE file."
+type: software
+title: "xquces: Experimental quantum computing for electronic structure"
+authors:
+  - family-names: Omanovic
+    given-names: David
+version: 0.1.0
+date-released: 2026-06-04
+repository-code: "https://github.com/davidomanovic/xquces"
+abstract: "xquces is an experimental quantum-computing library for electronic-structure simulations, including implementations of variational ansätze for strongly correlated electron systems."
+keywords:
+  - quantum computing
+  - quantum chemistry
+  - electronic structure
+  - variational quantum algorithms
+  - strongly correlated systems
