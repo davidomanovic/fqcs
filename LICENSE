@@ -1,0 +1,15 @@
+xquces Source-Available Academic License
+
+Copyright (c) 2026 David Omanovic. All rights reserved.
+
+This repository and all source code, documentation, examples, tests, scripts, data, figures, and other materials contained in it, except where explicitly stated otherwise, are proprietary works owned by David Omanovic.
+
+No permission is granted to use, copy, modify, merge, publish, distribute, sublicense, sell, relicense, host, mirror, train on, incorporate into another project, or create derivative works from this software or any substantial portion of it without prior written permission from the copyright holder.
+
+The public availability of this repository is only for inspection, academic review, reproducibility assessment, and citation. Viewing or forking the repository through GitHub is permitted only to the extent required by GitHub's Terms of Service for public repositories. No additional rights are granted by this license.
+
+Any academic, research, technical, commercial, or public work that uses, evaluates, benchmarks, compares against, discusses, or otherwise relies on xquces, its algorithms, its implementation, or results produced using it must cite xquces using the citation information provided in CITATION.cff or any later citation instructions provided by the author.
+
+Permission requests must be sent to the copyright holder before any use beyond inspection, academic review, reproducibility assessment, or citation.
+
+THE SOFTWARE IS PROVIDED FOR INSPECTION ONLY, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, NON-INFRINGEMENT, SECURITY, ACCURACY, OR RELIABILITY. IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY ARISING FROM OR IN CONNECTION WITH THE SOFTWARE OR THE USE OF, REVIEW OF, OR RELIANCE ON THE SOFTWARE.
